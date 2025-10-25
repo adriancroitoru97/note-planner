@@ -1,1 +1,1 @@
-# mvc-vs-mvvm
+# note-planner
