@@ -1,6 +1,6 @@
 package com.example.notesApp.entity;
 
-import com.example.notesApp.enums.Privacy;
+import com.example.notesApp.enums.NotePrivacy;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -8,38 +8,40 @@ import java.util.HashSet;
 import java.util.Set;
 
 @Entity
-@Getter
-@Setter
+@Table(name = "note")
+@Data
+@Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
 public class Note {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-
     private String title;
 
-    @Column(name = "text", columnDefinition = "TEXT")
+    @Column(columnDefinition = "TEXT")
     private String text;
 
-
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private Privacy privacy = Privacy.PUBLIC;
+    private NotePrivacy privacy;
 
-
-    // author/owner of the note
+    // Author of note
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "author_id")
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
     private User author;
 
-
-    // users with access when PRIVATE
+    // Users who can access a PRIVATE note
     @ManyToMany
-    @JoinTable(name = "note_shared_users",
+    @JoinTable(
+            name = "note_shared_users",
             joinColumns = @JoinColumn(name = "note_id"),
-            inverseJoinColumns = @JoinColumn(name = "user_id"))
+            inverseJoinColumns = @JoinColumn(name = "user_id")
+    )
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
     private Set<User> sharedWith = new HashSet<>();
 }

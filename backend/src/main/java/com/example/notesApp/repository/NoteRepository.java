@@ -2,7 +2,7 @@ package com.example.notesApp.repository;
 
 import com.example.notesApp.entity.Note;
 import com.example.notesApp.entity.User;
-import com.example.notesApp.enums.Privacy;
+import com.example.notesApp.enums.NotePrivacy;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -12,11 +12,16 @@ import java.util.List;
 
 @Repository
 public interface NoteRepository extends JpaRepository<Note, Long> {
-    List<Note> findAllByPrivacy(Privacy privacy);
+    List<Note> findByAuthor(User author);
 
-    @Query("select n from Note n where n.author = :user")
-    List<Note> findAllByAuthor(@Param("user") User user);
+    List<Note> findByPrivacy(NotePrivacy privacy);
 
-    @Query("select n from Note n join n.sharedWith u where u = :user")
-    List<Note> findAllSharedWith(@Param("user") User user);
+    @Query("""
+           select n from Note n
+           left join n.sharedWith u
+           where n.privacy = com.example.notesApp.enums.NotePrivacy.PUBLIC
+              or n.author = :user
+              or u = :user
+           """)
+    List<Note> findAllVisibleForUser(User user);
 }

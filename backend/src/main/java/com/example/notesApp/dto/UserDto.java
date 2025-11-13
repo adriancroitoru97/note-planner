@@ -1,0 +1,13 @@
+package com.example.notesApp.dto;
+
+import com.example.notesApp.enums.Role;
+import lombok.Data;
+
+@Data
+public class UserDto {
+    private Long id;
+    private String firstname;
+    private String lastname;
+    private String email;
+    private Role role;
+}
