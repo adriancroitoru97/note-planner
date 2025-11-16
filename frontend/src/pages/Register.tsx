@@ -42,7 +42,7 @@ const Register: React.FC = () => {
 
             if (!response.ok) {
                 const msg = await response.text();
-                alert(msg);
+                console.log(msg);
             }
 
             console.log("Registration success:");
