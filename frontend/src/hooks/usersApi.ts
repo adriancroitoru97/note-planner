@@ -28,7 +28,7 @@ export interface UserDto {
   id: number;
   firstname: string;
   lastname: string;
-  email?: string;
+  email: string;
   role?: string;
 }
 

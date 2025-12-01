@@ -4,27 +4,37 @@ import com.example.notesApp.dto.NoteEditingStatusDto;
 import com.example.notesApp.entity.Note;
 import com.example.notesApp.entity.User;
 import com.example.notesApp.repository.NoteRepository;
-import com.example.notesApp.service.UserService;
+import com.example.notesApp.repository.UserRepository;
 import com.example.notesApp.service.WebSocketService;
-import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
-import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.security.Principal;
 
 @Controller
 @RequiredArgsConstructor
 public class WebSocketController {
 
     private final WebSocketService webSocketService;
-    private final UserService userService;
+    private final UserRepository userRepository;
     private final NoteRepository noteRepository;
 
     @MessageMapping("/notes/editing")
-    @Transactional
-    public void handleEditingStatus(@Payload NoteEditingStatusDto status, Authentication authentication) {
-        User currentUser = userService.getCurrentUser(authentication);
+    @Transactional(readOnly = true)
+    public void handleEditingStatus(@Payload NoteEditingStatusDto status, Principal principal) {
+        if (principal == null) {
+            throw new RuntimeException("User not authenticated");
+        }
+
+        // Principal.getName() returns the email
+        String userEmail = principal.getName();
+        System.out.println("Handling editing status from user: " + userEmail);
+
+        User currentUser = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new RuntimeException("User not found"));
 
         Note note = noteRepository.findById(status.getNoteId())
                 .orElseThrow(() -> new RuntimeException("Note not found"));

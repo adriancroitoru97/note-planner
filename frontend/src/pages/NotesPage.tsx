@@ -53,6 +53,7 @@ const NotesPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
   // User cache for displaying names
   const [userCache, setUserCache] = useState<Map<number, UserDto>>(new Map());
@@ -150,6 +151,7 @@ const NotesPage: React.FC = () => {
     onUserEditing: handleUserEditing,
     onUserStoppedEditing: handleUserStoppedEditing,
     currentUserId,
+    currentUserEmail
   });
 
   const loadNotes = async () => {
@@ -159,6 +161,7 @@ const NotesPage: React.FC = () => {
       // Load current user first
       const currentUser = await usersApi.getCurrentUser();
       setCurrentUserId(currentUser.id);
+      setCurrentUserEmail(currentUser.email);
       setUserCache(prev => new Map(prev).set(currentUser.id, currentUser));
 
       // Load notes

@@ -24,6 +24,7 @@ interface UseWebSocketProps {
   onUserEditing?: (editingUser: EditingUser) => void;
   onUserStoppedEditing?: (editingUser: EditingUser) => void;
   currentUserId?: number | null;
+  currentUserEmail?: string | null; // Add this
 }
 
 export const useWebSocket = ({
@@ -33,6 +34,7 @@ export const useWebSocket = ({
                                onUserEditing,
                                onUserStoppedEditing,
                                currentUserId,
+                               currentUserEmail, // Add this
                              }: UseWebSocketProps) => {
   const clientRef = useRef<Client | null>(null);
   const [connected, setConnected] = useState(false);
@@ -112,8 +114,8 @@ export const useWebSocket = ({
     const connectFunction = () => {
       const token = localStorage.getItem('token');
 
-      if (!token) {
-        console.error('No JWT token found');
+      if (!token || !currentUserEmail) {
+        console.error('No JWT token or user email found');
         return;
       }
 
@@ -122,7 +124,7 @@ export const useWebSocket = ({
         return;
       }
 
-      console.log('Connecting to WebSocket...');
+      console.log('Connecting to WebSocket with user email:', currentUserEmail);
       const socket = new SockJS('http://localhost:8080/ws');
       const client = new Client({
         webSocketFactory: () => socket as WebSocket,
@@ -155,21 +157,19 @@ export const useWebSocket = ({
           handleMessage(data);
         });
 
-        // Subscribe to private queue for this user
-        if (currentUserId) {
-          console.log(`Subscribing to /user/${currentUserId}/queue/notes`);
-          client.subscribe(`/user/${currentUserId}/queue/notes`, (message: IMessage) => {
-            console.log('Received message on private queue /queue/notes');
-            const data: WebSocketMessage = JSON.parse(message.body);
-            handleMessage(data);
-          });
+        // Subscribe to private queue for this user using email
+        console.log(`Subscribing to /user/queue/notes`);
+        client.subscribe(`/user/queue/notes`, (message: IMessage) => {
+          console.log('Received message on private queue /user/queue/notes');
+          const data: WebSocketMessage = JSON.parse(message.body);
+          handleMessage(data);
+        });
 
-          client.subscribe(`/user/${currentUserId}/queue/notes/editing`, (message: IMessage) => {
-            console.log('Received message on private queue /queue/notes/editing');
-            const data: WebSocketMessage = JSON.parse(message.body);
-            handleMessage(data);
-          });
-        }
+        client.subscribe(`/user/queue/notes/editing`, (message: IMessage) => {
+          console.log('Received message on private queue /user/queue/notes/editing');
+          const data: WebSocketMessage = JSON.parse(message.body);
+          handleMessage(data);
+        });
       };
 
       client.onStompError = (frame) => {
@@ -196,7 +196,7 @@ export const useWebSocket = ({
 
     connectFnRef.current = connectFunction;
 
-    if (currentUserId !== null && currentUserId !== undefined) {
+    if (currentUserId !== null && currentUserId !== undefined && currentUserEmail) {
       connectFunction();
     }
 
@@ -210,7 +210,7 @@ export const useWebSocket = ({
         setConnected(false);
       }
     };
-  }, [currentUserId, handleMessage]);
+  }, [currentUserId, currentUserEmail, handleMessage]);
 
   const sendEditingStatus = useCallback((noteId: number, isEditing: boolean) => {
     if (clientRef.current && clientRef.current.connected) {

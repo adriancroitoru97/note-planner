@@ -7,9 +7,11 @@ import com.example.notesApp.entity.Note;
 import com.example.notesApp.enums.NotePrivacy;
 import com.example.notesApp.enums.WebSocketEventType;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class WebSocketService {
@@ -17,33 +19,108 @@ public class WebSocketService {
     private final SimpMessagingTemplate messagingTemplate;
 
     public void broadcastNoteCreated(NoteDto noteDto, Note note) {
+        log.info("Broadcasting note created: id={}, privacy={}", noteDto.getId(), note.getPrivacy());
+
         WebSocketMessage message = WebSocketMessage.builder()
                 .type(WebSocketEventType.NOTE_CREATED)
                 .note(noteDto)
                 .build();
 
-        handleNote(note, message);
+        if (note.getPrivacy() == NotePrivacy.PUBLIC) {
+            log.info("Broadcasting to /topic/notes");
+            messagingTemplate.convertAndSend("/topic/notes", message);
+        } else {
+            // Send to author using email as principal
+            String authorEmail = note.getAuthor().getEmail();
+            log.info("Sending to author: email={}, userId={}", authorEmail, note.getAuthor().getId());
+            messagingTemplate.convertAndSendToUser(
+                    authorEmail,
+                    "/queue/notes",
+                    message
+            );
+
+            // Send to collaborators using email as principal
+            note.getSharedWith().forEach(user -> {
+                log.info("Sending to collaborator: email={}, userId={}", user.getEmail(), user.getId());
+                messagingTemplate.convertAndSendToUser(
+                        user.getEmail(),
+                        "/queue/notes",
+                        message
+                );
+            });
+        }
     }
 
     public void broadcastNoteUpdated(NoteDto noteDto, Note note) {
+        log.info("Broadcasting note updated: id={}, privacy={}", noteDto.getId(), note.getPrivacy());
+
         WebSocketMessage message = WebSocketMessage.builder()
                 .type(WebSocketEventType.NOTE_UPDATED)
                 .note(noteDto)
                 .build();
 
-        handleNote(note, message);
+        if (note.getPrivacy() == NotePrivacy.PUBLIC) {
+            log.info("Broadcasting to /topic/notes");
+            messagingTemplate.convertAndSend("/topic/notes", message);
+        } else {
+            // Send to author using email as principal
+            String authorEmail = note.getAuthor().getEmail();
+            log.info("Sending to author: email={}, userId={}", authorEmail, note.getAuthor().getId());
+            messagingTemplate.convertAndSendToUser(
+                    authorEmail,
+                    "/queue/notes",
+                    message
+            );
+
+            // Send to collaborators using email as principal
+            note.getSharedWith().forEach(user -> {
+                log.info("Sending to collaborator: email={}, userId={}", user.getEmail(), user.getId());
+                messagingTemplate.convertAndSendToUser(
+                        user.getEmail(),
+                        "/queue/notes",
+                        message
+                );
+            });
+        }
     }
 
     public void broadcastNoteDeleted(Long noteId, Note note) {
+        log.info("Broadcasting note deleted: id={}, privacy={}", noteId, note.getPrivacy());
+
         WebSocketMessage message = WebSocketMessage.builder()
                 .type(WebSocketEventType.NOTE_DELETED)
                 .noteId(noteId)
                 .build();
 
-        handleNote(note, message);
+        if (note.getPrivacy() == NotePrivacy.PUBLIC) {
+            log.info("Broadcasting to /topic/notes");
+            messagingTemplate.convertAndSend("/topic/notes", message);
+        } else {
+            // Send to author using email as principal
+            String authorEmail = note.getAuthor().getEmail();
+            log.info("Sending to author: email={}, userId={}", authorEmail, note.getAuthor().getId());
+            messagingTemplate.convertAndSendToUser(
+                    authorEmail,
+                    "/queue/notes",
+                    message
+            );
+
+            // Send to collaborators using email as principal
+            note.getSharedWith().forEach(user -> {
+                log.info("Sending to collaborator: email={}, userId={}", user.getEmail(), user.getId());
+                messagingTemplate.convertAndSendToUser(
+                        user.getEmail(),
+                        "/queue/notes",
+                        message
+                );
+            });
+        }
     }
 
     public void broadcastEditingStatus(NoteEditingStatusDto status, Note note) {
+        log.info("Broadcasting editing status: noteId={}, userId={}, isEditing={}",
+                status.getNoteId(), status.getUserId(), status.getIsEditing());
+
         WebSocketMessage message = WebSocketMessage.builder()
                 .type(status.getIsEditing() ? WebSocketEventType.USER_EDITING : WebSocketEventType.USER_STOPPED_EDITING)
                 .noteId(status.getNoteId())
@@ -52,43 +129,24 @@ public class WebSocketService {
                 .build();
 
         if (note.getPrivacy() == NotePrivacy.PUBLIC) {
+            log.info("Broadcasting to /topic/notes/editing");
             messagingTemplate.convertAndSend("/topic/notes/editing", message);
         } else {
-            // Send to author
+            // Send to author using email as principal
+            String authorEmail = note.getAuthor().getEmail();
+            log.info("Sending to author: email={}, userId={}", authorEmail, note.getAuthor().getId());
             messagingTemplate.convertAndSendToUser(
-                    note.getAuthor().getId().toString(),
+                    authorEmail,
                     "/queue/notes/editing",
                     message
             );
 
-            // Send to collaborators
+            // Send to collaborators using email as principal
             note.getSharedWith().forEach(user -> {
+                log.info("Sending to collaborator: email={}, userId={}", user.getEmail(), user.getId());
                 messagingTemplate.convertAndSendToUser(
-                        user.getId().toString(),
+                        user.getEmail(),
                         "/queue/notes/editing",
-                        message
-                );
-            });
-        }
-    }
-
-    private void handleNote(Note note, WebSocketMessage message) {
-        if (note.getPrivacy() == NotePrivacy.PUBLIC) {
-            // Broadcast to all users
-            messagingTemplate.convertAndSend("/topic/notes", message);
-        } else {
-            // Send to author
-            messagingTemplate.convertAndSendToUser(
-                    note.getAuthor().getId().toString(),
-                    "/queue/notes",
-                    message
-            );
-
-            // Send to collaborators
-            note.getSharedWith().forEach(user -> {
-                messagingTemplate.convertAndSendToUser(
-                        user.getId().toString(),
-                        "/queue/notes",
                         message
                 );
             });

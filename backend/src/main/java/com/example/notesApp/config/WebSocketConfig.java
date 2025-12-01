@@ -12,14 +12,11 @@ import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageHeaderAccessor;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
-import java.util.Collections;
+import java.security.Principal;
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -60,12 +57,16 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                             String username = jwtService.extractUsername(token);
 
                             if (username != null && jwtService.isTokenValid(token)) {
-                                Authentication auth = new UsernamePasswordAuthenticationToken(
-                                        username,
-                                        null,
-                                        Collections.singletonList(new SimpleGrantedAuthority("ROLE_USER"))
-                                );
-                                accessor.setUser(auth);
+                                // Create a principal with the user's email as the name
+                                Principal principal = new Principal() {
+                                    @Override
+                                    public String getName() {
+                                        return username; // This is the email
+                                    }
+                                };
+
+                                accessor.setUser(principal);
+                                System.out.println("WebSocket authenticated user: " + username);
                             }
                         } catch (Exception e) {
                             System.err.println("Error authenticating WebSocket connection: " + e.getMessage());
