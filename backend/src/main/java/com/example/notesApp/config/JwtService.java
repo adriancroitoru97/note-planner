@@ -1,6 +1,5 @@
 package com.example.notesApp.config;
 
-
 import com.example.notesApp.entity.User;
 import com.example.notesApp.enums.Errors;
 import com.example.notesApp.repository.UserRepository;
@@ -22,10 +21,10 @@ import java.util.function.Function;
 
 @Service
 public class JwtService {
+    private static final String SECRET_KEY = "a7c6ab8b6244166cef638a225faf88dc502b04c2b600aede7010c5a1502ff015";
     @Autowired
     UserRepository userRepository;
 
-    private static final String SECRET_KEY = "a7c6ab8b6244166cef638a225faf88dc502b04c2b600aede7010c5a1502ff015";
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
     }
@@ -37,7 +36,7 @@ public class JwtService {
 
     public String generateToken(UserDetails userDetails) {
         Map<String, Object> claims = new HashMap<>();
-        if(userRepository.findByEmail(userDetails.getUsername()).isPresent()) {
+        if (userRepository.findByEmail(userDetails.getUsername()).isPresent()) {
             User user = userRepository.findByEmail(userDetails.getUsername()).get();
             claims.put("role", user.getRole());
             claims.put("firstname", user.getFirstname());
@@ -59,9 +58,18 @@ public class JwtService {
                 .compact();
     }
 
-    public boolean isTokenValid (String token, UserDetails userDetails) {
+    public boolean isTokenValid(String token, UserDetails userDetails) {
         final String username = extractUsername(token);
         return (username.equals(userDetails.getUsername())) && !isTokenExpired(token);
+    }
+
+    // Add this overloaded method for WebSocket authentication
+    public boolean isTokenValid(String token) {
+        try {
+            return !isTokenExpired(token);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private boolean isTokenExpired(String token) {

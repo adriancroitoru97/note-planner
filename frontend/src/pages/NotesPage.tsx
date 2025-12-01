@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useRef, useState} from "react";
 import {
   Alert,
   Avatar,
+  Badge,
   Box,
   Button,
   Card,
@@ -21,6 +22,7 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import EditIcon from "@mui/icons-material/Edit";
 import {DragDropContext, Draggable, Droppable, type DropResult} from "@hello-pangea/dnd";
 import {
   type CreateNoteRequest,
@@ -31,6 +33,7 @@ import {
 } from "../hooks/notesApi.ts";
 import {type UserDto, usersApi} from "../hooks/usersApi.ts";
 import {CollaboratorsModal} from "../components/CollaboratorsModal.tsx";
+import {type EditingUser, useWebSocket} from "../hooks/useWebSocket.ts";
 
 const getPrivacyColor = (privacy: NotePrivacy) => {
   switch (privacy) {
@@ -42,6 +45,7 @@ const getPrivacyColor = (privacy: NotePrivacy) => {
 };
 
 const DEBOUNCE_DELAY = 500; // milliseconds
+const EDITING_NOTIFY_DELAY = 1000; // Delay before notifying others of editing
 
 const NotesPage: React.FC = () => {
   const [notes, setNotes] = useState<NoteDto[]>([]);
@@ -60,6 +64,10 @@ const NotesPage: React.FC = () => {
   const [collaboratorsModalOpen, setCollaboratorsModalOpen] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
 
+  // Track who's editing which note
+  const [editingUsers, setEditingUsers] = useState<Map<number, EditingUser[]>>(new Map());
+  const [locallyEditingNoteId, setLocallyEditingNoteId] = useState<number | null>(null);
+
   // Refs for new note form inputs
   const newTitleRef = useRef<HTMLInputElement>(null);
   const newTextRef = useRef<HTMLInputElement>(null);
@@ -67,10 +75,82 @@ const NotesPage: React.FC = () => {
 
   // Debounce timers for each note
   const updateTimersRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
+  const editingNotifyTimersRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
+
+  // Track if an update came from WebSocket to prevent echo
+  const isRemoteUpdateRef = useRef(false);
 
   const isMyNote = (note: NoteDto): boolean => {
     return currentUserId !== null && note.authorId === currentUserId;
   };
+
+  // WebSocket handlers
+  const handleNoteCreated = useCallback((note: NoteDto) => {
+    console.log('Note created via WebSocket:', note);
+    setNotes((prev) => {
+      // Check if note already exists
+      if (prev.find(n => n.id === note.id)) {
+        return prev;
+      }
+      return [note, ...prev];
+    });
+    if (note.authorId !== currentUserId) {
+      setSuccess(`New note created by ${getUserDisplayName(note.authorId)}`);
+    }
+  }, [currentUserId]);
+
+  const handleNoteUpdated = useCallback((note: NoteDto) => {
+    console.log('Note updated via WebSocket:', note);
+    isRemoteUpdateRef.current = true;
+    setNotes((prev) => {
+      return prev.map((n) => (n.id === note.id ? note : n));
+    });
+    setTimeout(() => {
+      isRemoteUpdateRef.current = false;
+    }, 100);
+  }, []);
+
+  const handleNoteDeleted = useCallback((noteId: number) => {
+    console.log('Note deleted via WebSocket:', noteId);
+    setNotes((prev) => prev.filter((n) => n.id !== noteId));
+    setSuccess('A note was deleted');
+  }, []);
+
+  const handleUserEditing = useCallback((editingUser: EditingUser) => {
+    console.log('User started editing:', editingUser);
+    setEditingUsers((prev) => {
+      const newMap = new Map(prev);
+      const editors = newMap.get(editingUser.noteId) || [];
+      // Add user if not already in the list
+      if (!editors.find(e => e.userId === editingUser.userId)) {
+        newMap.set(editingUser.noteId, [...editors, editingUser]);
+      }
+      return newMap;
+    });
+  }, []);
+
+  const handleUserStoppedEditing = useCallback((editingUser: EditingUser) => {
+    console.log('User stopped editing:', editingUser);
+    setEditingUsers((prev) => {
+      const newMap = new Map(prev);
+      const editors = newMap.get(editingUser.noteId) || [];
+      newMap.set(
+        editingUser.noteId,
+        editors.filter(e => e.userId !== editingUser.userId)
+      );
+      return newMap;
+    });
+  }, []);
+
+  // Initialize WebSocket
+  const {connected, sendEditingStatus} = useWebSocket({
+    onNoteCreated: handleNoteCreated,
+    onNoteUpdated: handleNoteUpdated,
+    onNoteDeleted: handleNoteDeleted,
+    onUserEditing: handleUserEditing,
+    onUserStoppedEditing: handleUserStoppedEditing,
+    currentUserId,
+  });
 
   const loadNotes = async () => {
     setLoading(true);
@@ -138,11 +218,46 @@ const NotesPage: React.FC = () => {
   useEffect(() => {
     return () => {
       updateTimersRef.current.forEach(timer => clearTimeout(timer));
+      editingNotifyTimersRef.current.forEach(timer => clearTimeout(timer));
+
+      // Notify that we stopped editing
+      if (locallyEditingNoteId) {
+        sendEditingStatus(locallyEditingNoteId, false);
+      }
     };
-  }, []);
+  }, [locallyEditingNoteId, sendEditingStatus]);
+
+  // Notify editing status when user starts/stops editing
+  const notifyEditingStatus = useCallback((noteId: number, isEditing: boolean) => {
+    // Clear existing timer
+    const existingTimer = editingNotifyTimersRef.current.get(noteId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    if (isEditing) {
+      // Delay before notifying to avoid spam
+      const timer = setTimeout(() => {
+        sendEditingStatus(noteId, true);
+        setLocallyEditingNoteId(noteId);
+        editingNotifyTimersRef.current.delete(noteId);
+      }, EDITING_NOTIFY_DELAY);
+
+      editingNotifyTimersRef.current.set(noteId, timer);
+    } else {
+      // Immediately notify stop editing
+      sendEditingStatus(noteId, false);
+      setLocallyEditingNoteId(null);
+    }
+  }, [sendEditingStatus]);
 
   // Debounced update function
   const debouncedUpdateNote = useCallback((noteId: number, updatedNote: NoteDto) => {
+    // Don't send update if this was triggered by a remote update
+    if (isRemoteUpdateRef.current) {
+      return;
+    }
+
     // Clear existing timer for this note
     const existingTimer = updateTimersRef.current.get(noteId);
     if (existingTimer) {
@@ -163,6 +278,9 @@ const NotesPage: React.FC = () => {
 
         await notesApi.updateNote(noteId, request);
         updateTimersRef.current.delete(noteId);
+
+        // Stop editing notification after update
+        notifyEditingStatus(noteId, false);
       } catch (err: unknown) {
         setError("Failed to update note");
         console.error("Error updating note:", err);
@@ -172,10 +290,13 @@ const NotesPage: React.FC = () => {
     }, DEBOUNCE_DELAY);
 
     updateTimersRef.current.set(noteId, timer);
-  }, []);
+  }, [notifyEditingStatus]);
 
   // Generic update handler for any note field
   const handleNoteUpdate = (noteId: number, updates: Partial<NoteDto>) => {
+    // Start editing notification
+    notifyEditingStatus(noteId, true);
+
     setNotes((prev) => {
       return prev.map((note) => {
         if (note.id === noteId) {
@@ -213,9 +334,8 @@ const NotesPage: React.FC = () => {
         }),
       };
 
-      const createdNote = await notesApi.createNote(request);
-      // Add new note at the top
-      setNotes((prev) => [createdNote, ...prev]);
+      await notesApi.createNote(request);
+      // Note will be added via WebSocket
 
       // Reset form
       if (newTitleRef.current) newTitleRef.current.value = "";
@@ -245,7 +365,7 @@ const NotesPage: React.FC = () => {
 
     try {
       await notesApi.deleteNote(id);
-      setNotes((prev) => prev.filter((n) => n.id !== id));
+      // Note will be removed via WebSocket
       setSuccess("Note deleted successfully!");
     } catch (err: unknown) {
       setError("Failed to delete note");
@@ -323,15 +443,26 @@ const NotesPage: React.FC = () => {
     return notes.find((note) => note.id === editingNoteId);
   };
 
+  const getEditorsForNote = (noteId: number): EditingUser[] => {
+    return editingUsers.get(noteId) || [];
+  };
+
   return (
     <Box sx={{maxWidth: 800, mx: "auto", mt: 6, mb: 10}}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" align="center" sx={{flex: 1}}>
           ✨ My Notes
         </Typography>
-        <IconButton onClick={loadNotes} disabled={loading} color="primary">
-          <RefreshIcon/>
-        </IconButton>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Chip
+            label={connected ? "Connected" : "Disconnected"}
+            color={connected ? "success" : "error"}
+            size="small"
+          />
+          <IconButton onClick={loadNotes} disabled={loading} color="primary">
+            <RefreshIcon/>
+          </IconButton>
+        </Stack>
       </Stack>
 
       {/* Create new note */}
@@ -405,139 +536,175 @@ const NotesPage: React.FC = () => {
           <Droppable droppableId="notes">
             {(provided) => (
               <Box ref={provided.innerRef} {...provided.droppableProps}>
-                {notes.map((note, index) => (
-                  <Draggable
-                    key={note.id.toString()}
-                    draggableId={note.id.toString()}
-                    index={index}
-                  >
-                    {(provided, snapshot) => (
-                      <Card
-                        ref={provided.innerRef}
-                        {...provided.draggableProps}
-                        {...provided.dragHandleProps}
-                        sx={{
-                          mb: 2,
-                          p: 2,
-                          transition: "background-color 0.2s",
-                          backgroundColor: snapshot.isDragging ? (isMyNote(note) ? "#e0e0d9" : "#f7f6b9") :
-                            isMyNote(note)
-                              ? "white"
-                              : "#faf9d6",
-                          boxShadow: snapshot.isDragging
-                            ? 4
-                            : "0px 2px 6px rgba(0,0,0,0.1)",
-                        }}
-                      >
-                        <CardContent>
-                          <Grid container alignItems="center" spacing={2}>
-                            <Grid>
-                              <Tooltip title={getUserDisplayName(note.authorId)}>
-                                <Avatar sx={{bgcolor: "primary.main"}}>
-                                  {getUserInitials(note.authorId)}
-                                </Avatar>
-                              </Tooltip>
-                            </Grid>
-                            <Grid size="grow">
-                              <TextField
-                                variant="standard"
-                                fullWidth
-                                value={note.title}
-                                onChange={(e) =>
-                                  handleNoteUpdate(note.id, {title: e.target.value})
-                                }
-                                sx={{mb: 1}}
-                                slotProps={{
-                                  input: {
-                                    style: {fontWeight: "bold", fontSize: "1.1rem"},
-                                  }
-                                }}
-                              />
-                              <TextField
-                                variant="outlined"
-                                fullWidth
-                                multiline
-                                minRows={2}
-                                value={note.text}
-                                onChange={(e) =>
-                                  handleNoteUpdate(note.id, {text: e.target.value})
-                                }
-                              />
+                {notes.map((note, index) => {
+                  const editors = getEditorsForNote(note.id);
+                  const hasEditors = editors.length > 0;
 
-                              {isMyNote(note) &&
-                                  <Stack
-                                      direction="row"
-                                      spacing={1}
-                                      alignItems="center"
-                                      sx={{mt: 1}}
-                                      flexWrap="wrap"
-                                  >
-                                      <Select
-                                          size="small"
-                                          value={note.privacy}
-                                          onChange={(e) =>
-                                            handlePrivacyChange(note.id, e.target.value as NotePrivacy)
-                                          }
+                  return (
+                    <Draggable
+                      key={note.id.toString()}
+                      draggableId={note.id.toString()}
+                      index={index}
+                    >
+                      {(provided, snapshot) => (
+                        <Card
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          {...provided.dragHandleProps}
+                          sx={{
+                            mb: 2,
+                            p: 2,
+                            transition: "background-color 0.2s",
+                            backgroundColor: snapshot.isDragging ? (isMyNote(note) ? "#e0e0d9" : "#f7f6b9") :
+                              isMyNote(note)
+                                ? "white"
+                                : "#faf9d6",
+                            boxShadow: snapshot.isDragging
+                              ? 4
+                              : "0px 2px 6px rgba(0,0,0,0.1)",
+                            border: hasEditors ? "2px solid #1976d2" : "none",
+                          }}
+                        >
+                          <CardContent>
+                            {hasEditors && (
+                              <Stack direction="row" spacing={0.5} mb={1} flexWrap="wrap">
+                                <Chip
+                                  icon={<EditIcon/>}
+                                  label={`${editors.map(e => e.username).join(", ")} editing...`}
+                                  size="small"
+                                  color="primary"
+                                  variant="outlined"
+                                />
+                              </Stack>
+                            )}
+
+                            <Grid container alignItems="center" spacing={2}>
+                              <Grid>
+                                <Tooltip title={getUserDisplayName(note.authorId)}>
+                                  <Badge
+                                    overlap="circular"
+                                    anchorOrigin={{vertical: 'bottom', horizontal: 'right'}}
+                                    badgeContent={
+                                      hasEditors ? (
+                                        <Box
                                           sx={{
-                                            fontWeight: 500,
-                                            backgroundColor: (theme) =>
-                                              theme.palette[getPrivacyColor(note.privacy)]
-                                                ?.light,
+                                            width: 12,
+                                            height: 12,
+                                            borderRadius: '50%',
+                                            backgroundColor: '#1976d2',
+                                            border: '2px solid white',
                                           }}
-                                      >
-                                          <MenuItem value="PUBLIC">Public</MenuItem>
-                                          <MenuItem value="PRIVATE">Private</MenuItem>
-                                      </Select>
+                                        />
+                                      ) : null
+                                    }
+                                  >
+                                    <Avatar sx={{bgcolor: "primary.main"}}>
+                                      {getUserInitials(note.authorId)}
+                                    </Avatar>
+                                  </Badge>
+                                </Tooltip>
+                              </Grid>
+                              <Grid size="grow">
+                                <TextField
+                                  variant="standard"
+                                  fullWidth
+                                  value={note.title}
+                                  onChange={(e) =>
+                                    handleNoteUpdate(note.id, {title: e.target.value})
+                                  }
+                                  sx={{mb: 1}}
+                                  slotProps={{
+                                    input: {
+                                      style: {fontWeight: "bold", fontSize: "1.1rem"},
+                                    }
+                                  }}
+                                />
+                                <TextField
+                                  variant="outlined"
+                                  fullWidth
+                                  multiline
+                                  minRows={2}
+                                  value={note.text}
+                                  onChange={(e) =>
+                                    handleNoteUpdate(note.id, {text: e.target.value})
+                                  }
+                                />
 
-                                    {note.privacy === "PRIVATE" && (
-                                      <>
-                                        <Button
-                                          size="large"
-                                          variant="outlined"
-                                          onClick={() => handleEditCollaborators(note.id)}
+                                {isMyNote(note) &&
+                                    <Stack
+                                        direction="row"
+                                        spacing={1}
+                                        alignItems="center"
+                                        sx={{mt: 1}}
+                                        flexWrap="wrap"
+                                    >
+                                        <Select
+                                            size="small"
+                                            value={note.privacy}
+                                            onChange={(e) =>
+                                              handlePrivacyChange(note.id, e.target.value as NotePrivacy)
+                                            }
+                                            sx={{
+                                              fontWeight: 500,
+                                              backgroundColor: (theme) =>
+                                                theme.palette[getPrivacyColor(note.privacy)]
+                                                  ?.light,
+                                            }}
                                         >
-                                          Edit Collaborators
-                                        </Button>
-                                        {note.sharedWithUserIds &&
-                                          note.sharedWithUserIds.length > 0 && (
-                                            <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                                              <Typography variant="caption" sx={{mr: 1, alignSelf: "center"}}>
-                                                Shared with:
-                                              </Typography>
-                                              {note.sharedWithUserIds.map((userId) => (
-                                                <Chip
-                                                  key={userId}
-                                                  avatar={
-                                                    <Avatar style={{color: "white"}} sx={{bgcolor: "primary.main"}}>
-                                                      {getUserInitials(userId)}
-                                                    </Avatar>
-                                                  }
-                                                  label={getUserDisplayName(userId)}
-                                                  size="small"
-                                                  sx={{m: 0.5}}
-                                                />
-                                              ))}
-                                            </Stack>
-                                          )}
-                                      </>
-                                    )}
-                                  </Stack>}
-                            </Grid>
+                                            <MenuItem value="PUBLIC">Public</MenuItem>
+                                            <MenuItem value="PRIVATE">Private</MenuItem>
+                                        </Select>
 
-                            <Grid>{isMyNote(note) &&
-                                <IconButton
-                                    color="error"
-                                    onClick={() => handleDelete(note.id)}
-                                >
-                                    <DeleteIcon/>
-                                </IconButton>}
+                                      {note.privacy === "PRIVATE" && (
+                                        <>
+                                          <Button
+                                            size="large"
+                                            variant="outlined"
+                                            onClick={() => handleEditCollaborators(note.id)}
+                                          >
+                                            Edit Collaborators
+                                          </Button>
+                                          {note.sharedWithUserIds &&
+                                            note.sharedWithUserIds.length > 0 && (
+                                              <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                                                <Typography variant="caption" sx={{mr: 1, alignSelf: "center"}}>
+                                                  Shared with:
+                                                </Typography>
+                                                {note.sharedWithUserIds.map((userId) => (
+                                                  <Chip
+                                                    key={userId}
+                                                    avatar={
+                                                      <Avatar style={{color: "white"}} sx={{bgcolor: "primary.main"}}>
+                                                        {getUserInitials(userId)}
+                                                      </Avatar>
+                                                    }
+                                                    label={getUserDisplayName(userId)}
+                                                    size="small"
+                                                    sx={{m: 0.5}}
+                                                  />
+                                                ))}
+                                              </Stack>
+                                            )}
+                                        </>
+                                      )}
+                                    </Stack>}
+                              </Grid>
+
+                              <Grid>{isMyNote(note) &&
+                                  <IconButton
+                                      color="error"
+                                      onClick={() => handleDelete(note.id)}
+                                  >
+                                      <DeleteIcon/>
+                                  </IconButton>}
+                              </Grid>
                             </Grid>
-                          </Grid>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </Draggable>
-                ))}
+                          </CardContent>
+                        </Card>
+                      )}
+                    </Draggable>
+                  );
+                })}
                 {provided.placeholder}
               </Box>
             )}

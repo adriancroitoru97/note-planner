@@ -23,6 +23,7 @@ public class NoteService {
     private final NoteRepository noteRepository;
     private final UserRepository userRepository;
     private final UserService userService;
+    private final WebSocketService webSocketService;
 
     public NoteDto createNote(CreateNoteRequest request, Authentication auth) {
         User author = userService.getCurrentUser(auth);
@@ -40,7 +41,12 @@ public class NoteService {
         }
 
         Note saved = noteRepository.save(note);
-        return toDto(saved);
+        NoteDto dto = toDto(saved);
+
+        // Broadcast the creation
+        webSocketService.broadcastNoteCreated(dto, saved);
+
+        return dto;
     }
 
     public NoteDto getNote(Long id, Authentication auth) {
@@ -100,7 +106,12 @@ public class NoteService {
         }
 
         Note saved = noteRepository.save(note);
-        return toDto(saved);
+        NoteDto dto = toDto(saved);
+
+        // Broadcast the update
+        webSocketService.broadcastNoteUpdated(dto, saved);
+
+        return dto;
     }
 
     public void deleteNote(Long id, Authentication auth) {
@@ -113,6 +124,9 @@ public class NoteService {
         if (!note.getAuthor().getId().equals(current.getId())) {
             throw new RuntimeException("Only author can delete the note");
         }
+
+        // Broadcast before deletion
+        webSocketService.broadcastNoteDeleted(id, note);
 
         noteRepository.delete(note);
     }
