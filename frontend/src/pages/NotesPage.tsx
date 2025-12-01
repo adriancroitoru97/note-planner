@@ -77,6 +77,13 @@ const NotesPage: React.FC = () => {
   // Queue for pending updates to prevent race conditions
   const updateQueueRef = useRef<Map<number, Promise<void>>>(new Map());
 
+  // Track currently focused input to prevent WebSocket overwrites
+  const focusedInputRef = useRef<{ noteId: number, field: 'title' | 'text' } | null>(null);
+  const inputValuesRef = useRef<Map<string, string>>(new Map());
+
+  // Debounce timer for API updates
+  const debounceTimersRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
+
   const isMyNote = (note: NoteDto): boolean => {
     return currentUserId !== null && note.authorId === currentUserId;
   };
@@ -135,6 +142,26 @@ const NotesPage: React.FC = () => {
       }
 
       if (existingNote) {
+        // Don't overwrite fields that are currently being edited
+        const focused = focusedInputRef.current;
+        if (focused && focused.noteId === note.id) {
+          // Keep the current value for the focused field
+          const key = `${note.id}-${focused.field}`;
+          const currentValue = inputValuesRef.current.get(key);
+
+          if (currentValue !== undefined) {
+            return prev.map((n) => {
+              if (n.id === note.id) {
+                return {
+                  ...note,
+                  [focused.field]: currentValue
+                };
+              }
+              return n;
+            });
+          }
+        }
+
         // Update existing note
         return prev.map((n) => (n.id === note.id ? note : n));
       } else {
@@ -260,6 +287,9 @@ const NotesPage: React.FC = () => {
       if (locallyEditingNoteId) {
         sendEditingStatus(locallyEditingNoteId, false);
       }
+
+      // Clear all debounce timers
+      debounceTimersRef.current.forEach(timer => clearTimeout(timer));
     };
   }, [locallyEditingNoteId, sendEditingStatus]);
 
@@ -307,19 +337,37 @@ const NotesPage: React.FC = () => {
     return updatePromise;
   }, []);
 
-  // Generic update handler for any note field
+  // Generic update handler for any note field with debouncing
   const handleNoteUpdate = (noteId: number, updates: Partial<NoteDto>) => {
+    // Update local state immediately for responsive UI
     setNotes((prev) => {
       return prev.map((note) => {
         if (note.id === noteId) {
-          const updatedNote = {...note, ...updates};
-          // Trigger immediate update
-          updateNoteImmediately(noteId, updatedNote);
-          return updatedNote;
+          return {...note, ...updates};
         }
         return note;
       });
     });
+
+    // Clear existing debounce timer for this note
+    const existingTimer = debounceTimersRef.current.get(noteId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    // Set new debounce timer
+    const timer = setTimeout(() => {
+      setNotes((prev) => {
+        const note = prev.find(n => n.id === noteId);
+        if (note) {
+          updateNoteImmediately(noteId, note);
+        }
+        return prev;
+      });
+      debounceTimersRef.current.delete(noteId);
+    }, 500); // 500ms debounce
+
+    debounceTimersRef.current.set(noteId, timer);
   };
 
   const handleAddNote = async () => {
@@ -448,17 +496,56 @@ const NotesPage: React.FC = () => {
     return editingUsers.get(noteId) || [];
   };
 
-  // Handle editing status
-  const handleFocus = (noteId: number) => {
+  // Handle editing status and track focused inputs
+  const handleFocus = (noteId: number, field: 'title' | 'text') => {
     sendEditingStatus(noteId, true);
     setLocallyEditingNoteId(noteId);
+    focusedInputRef.current = {noteId, field};
+
+    // Store current value
+    const note = notes.find(n => n.id === noteId);
+    if (note) {
+      const key = `${noteId}-${field}`;
+      inputValuesRef.current.set(key, note[field]);
+    }
   };
 
-  const handleBlur = (noteId: number) => {
+  const handleBlur = (noteId: number, field: 'title' | 'text') => {
     sendEditingStatus(noteId, false);
     if (locallyEditingNoteId === noteId) {
       setLocallyEditingNoteId(null);
     }
+
+    // Clear focused input tracking
+    if (focusedInputRef.current?.noteId === noteId && focusedInputRef.current?.field === field) {
+      focusedInputRef.current = null;
+    }
+
+    // Clear stored value
+    const key = `${noteId}-${field}`;
+    inputValuesRef.current.delete(key);
+
+    // Trigger immediate update on blur to ensure final state is saved
+    const existingTimer = debounceTimersRef.current.get(noteId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      debounceTimersRef.current.delete(noteId);
+
+      const note = notes.find(n => n.id === noteId);
+      if (note) {
+        updateNoteImmediately(noteId, note);
+      }
+    }
+  };
+
+  // Handle input changes
+  const handleInputChange = (noteId: number, field: 'title' | 'text', value: string) => {
+    // Update tracked value
+    const key = `${noteId}-${field}`;
+    inputValuesRef.current.set(key, value);
+
+    // Update note
+    handleNoteUpdate(noteId, {[field]: value});
   };
 
   return (
@@ -624,10 +711,10 @@ const NotesPage: React.FC = () => {
                                   fullWidth
                                   value={note.title}
                                   onChange={(e) =>
-                                    handleNoteUpdate(note.id, {title: e.target.value})
+                                    handleInputChange(note.id, 'title', e.target.value)
                                   }
-                                  onFocus={() => handleFocus(note.id)}
-                                  onBlur={() => handleBlur(note.id)}
+                                  onFocus={() => handleFocus(note.id, 'title')}
+                                  onBlur={() => handleBlur(note.id, 'title')}
                                   sx={{mb: 1}}
                                   slotProps={{
                                     input: {
@@ -642,10 +729,10 @@ const NotesPage: React.FC = () => {
                                   minRows={2}
                                   value={note.text}
                                   onChange={(e) =>
-                                    handleNoteUpdate(note.id, {text: e.target.value})
+                                    handleInputChange(note.id, 'text', e.target.value)
                                   }
-                                  onFocus={() => handleFocus(note.id)}
-                                  onBlur={() => handleBlur(note.id)}
+                                  onFocus={() => handleFocus(note.id, 'text')}
+                                  onBlur={() => handleBlur(note.id, 'text')}
                                 />
 
                                 {isMyNote(note) &&
