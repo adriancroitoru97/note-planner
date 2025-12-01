@@ -300,6 +300,12 @@ const NotesPage: React.FC = () => {
 
   const getUserDisplayName = (userId: number): string => {
     const user = userCache.get(userId);
+    if (!user) {
+      usersApi.getUserById(userId).then((fetchedUser) => {
+        setUserCache((prev) => new Map(prev).set(userId, fetchedUser));
+      });
+    }
+
     return user?.firstname + " " + user?.lastname || `User ${userId}`;
   };
 
