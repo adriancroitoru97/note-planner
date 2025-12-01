@@ -54,11 +54,13 @@ const NotesPage: React.FC = () => {
   // User cache for displaying names
   const [userCache, setUserCache] = useState<Map<number, UserDto>>(new Map());
 
-  // New note form state
-  const [newTitle, setNewTitle] = useState("");
-  const [newText, setNewText] = useState("");
-  const [newPrivacy, setNewPrivacy] = useState<NotePrivacy>("PUBLIC");
+  // New note form state - only for creating state
   const [creating, setCreating] = useState(false);
+
+  // Refs for new note form inputs
+  const newTitleRef = useRef<HTMLInputElement>(null);
+  const newTextRef = useRef<HTMLInputElement>(null);
+  const newPrivacyRef = useRef<HTMLSelectElement>(null);
 
   // Debounce timers for each note
   const updateTimersRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
@@ -185,7 +187,11 @@ const NotesPage: React.FC = () => {
   };
 
   const handleAddNote = async () => {
-    if (!newTitle.trim()) {
+    const title = newTitleRef.current?.value || "";
+    const text = newTextRef.current?.value || "";
+    const privacy = (newPrivacyRef.current?.value as NotePrivacy) || "PUBLIC";
+
+    if (!title.trim()) {
       setError("Title is required");
       return;
     }
@@ -195,22 +201,24 @@ const NotesPage: React.FC = () => {
 
     try {
       const request: CreateNoteRequest = {
-        title: newTitle,
-        text: newText,
-        privacy: newPrivacy,
+        title,
+        text,
+        privacy,
         // Add sharedWithUserIds if privacy is PRIVATE
-        ...(newPrivacy === "PRIVATE" && {
+        ...(privacy === "PRIVATE" && {
           sharedWithUserIds: [], // You can add a UI to select users
         }),
       };
 
       const createdNote = await notesApi.createNote(request);
-      setNotes((prev) => [...prev, createdNote]);
+      // Add new note at the top
+      setNotes((prev) => [createdNote, ...prev]);
 
       // Reset form
-      setNewTitle("");
-      setNewText("");
-      setNewPrivacy("PUBLIC");
+      if (newTitleRef.current) newTitleRef.current.value = "";
+      if (newTextRef.current) newTextRef.current.value = "";
+      if (newPrivacyRef.current) newPrivacyRef.current.value = "PUBLIC";
+
       setSuccess("Note created successfully!");
     } catch (err: unknown) {
       setError("Failed to create note");
@@ -297,8 +305,8 @@ const NotesPage: React.FC = () => {
             <TextField
               fullWidth
               label="Title"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
+              inputRef={newTitleRef}
+              defaultValue=""
               disabled={creating}
               required
             />
@@ -307,16 +315,16 @@ const NotesPage: React.FC = () => {
             <TextField
               fullWidth
               label="Text"
-              value={newText}
-              onChange={(e) => setNewText(e.target.value)}
+              inputRef={newTextRef}
+              defaultValue=""
               disabled={creating}
             />
           </Grid>
           <Grid size={{xs: 12, sm: 3}}>
             <Select
               fullWidth
-              value={newPrivacy}
-              onChange={(e) => setNewPrivacy(e.target.value as NotePrivacy)}
+              inputRef={newPrivacyRef}
+              defaultValue="PUBLIC"
               disabled={creating}
             >
               <MenuItem value="PUBLIC">Public</MenuItem>
