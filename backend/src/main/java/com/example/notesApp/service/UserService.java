@@ -7,6 +7,7 @@ import com.example.notesApp.entity.User;
 import com.example.notesApp.enums.Role;
 import com.example.notesApp.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -18,6 +19,16 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+
+    public User getCurrentUser(Authentication authentication) {
+        String email = authentication.getName();
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Current user not found"));
+    }
+
+    public UserDto getCurrentUserDto(Authentication authentication) {
+        return toDto(getCurrentUser(authentication));
+    }
 
     public UserDto createUser(CreateUserRequest request) {
         User user = User.builder()

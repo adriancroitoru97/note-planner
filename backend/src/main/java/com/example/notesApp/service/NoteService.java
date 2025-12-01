@@ -22,16 +22,10 @@ public class NoteService {
 
     private final NoteRepository noteRepository;
     private final UserRepository userRepository;
-
-    // helper: current logged-in user from Authentication
-    private User getCurrentUser(Authentication authentication) {
-        String email = authentication.getName();
-        return userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("Current user not found"));
-    }
+    private final UserService userService;
 
     public NoteDto createNote(CreateNoteRequest request, Authentication auth) {
-        User author = getCurrentUser(auth);
+        User author = userService.getCurrentUser(auth);
         Note note = new Note();
         note.setTitle(request.getTitle());
         note.setText(request.getText());
@@ -50,7 +44,7 @@ public class NoteService {
     }
 
     public NoteDto getNote(Long id, Authentication auth) {
-        User current = getCurrentUser(auth);
+        User current = userService.getCurrentUser(auth);
 
         Note note = noteRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Note not found"));
@@ -63,7 +57,7 @@ public class NoteService {
     }
 
     public List<NoteDto> getAllVisibleNotes(Authentication auth) {
-        User current = getCurrentUser(auth);
+        User current = userService.getCurrentUser(auth);
         return noteRepository.findAllVisibleForUser(current)
                 .stream()
                 .map(this::toDto)
@@ -71,7 +65,7 @@ public class NoteService {
     }
 
     public List<NoteDto> getMyNotes(Authentication auth) {
-        User current = getCurrentUser(auth);
+        User current = userService.getCurrentUser(auth);
         return noteRepository.findByAuthor(current)
                 .stream()
                 .map(this::toDto)
@@ -79,7 +73,7 @@ public class NoteService {
     }
 
     public NoteDto updateNote(Long id, UpdateNoteRequest request, Authentication auth) {
-        User current = getCurrentUser(auth);
+        User current = userService.getCurrentUser(auth);
 
         Note note = noteRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Note not found"));
@@ -107,7 +101,7 @@ public class NoteService {
     }
 
     public void deleteNote(Long id, Authentication auth) {
-        User current = getCurrentUser(auth);
+        User current = userService.getCurrentUser(auth);
 
         Note note = noteRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Note not found"));
