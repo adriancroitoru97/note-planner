@@ -45,4 +45,9 @@ export const usersApi = {
     const response = await userApiClient.get<UserDto>(`/getUser/${id}`);
     return response.data;
   },
+
+  getAllUsers: async (): Promise<UserDto[]> => {
+    const response = await userApiClient.get<UserDto[]>(`/all`);
+    return response.data;
+  },
 };

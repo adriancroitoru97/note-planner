@@ -30,6 +30,7 @@ import {
   type UpdateNoteRequest
 } from "../hooks/notesApi.ts";
 import {type UserDto, usersApi} from "../hooks/usersApi.ts";
+import {CollaboratorsModal} from "../components/CollaboratorsModal.tsx";
 
 const getPrivacyColor = (privacy: NotePrivacy) => {
   switch (privacy) {
@@ -56,6 +57,10 @@ const NotesPage: React.FC = () => {
 
   // New note form state - only for creating state
   const [creating, setCreating] = useState(false);
+
+  // Collaborators modal state
+  const [collaboratorsModalOpen, setCollaboratorsModalOpen] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
 
   // Refs for new note form inputs
   const newTitleRef = useRef<HTMLInputElement>(null);
@@ -153,7 +158,7 @@ const NotesPage: React.FC = () => {
           title: updatedNote.title,
           text: updatedNote.text,
           privacy: updatedNote.privacy,
-          ...(updatedNote.privacy === "PRIVATE" && {
+          ...(updatedNote.privacy === "COLLABORATORS" && {
             sharedWithUserIds: updatedNote.sharedWithUserIds || [],
           }),
         };
@@ -204,9 +209,9 @@ const NotesPage: React.FC = () => {
         title,
         text,
         privacy,
-        // Add sharedWithUserIds if privacy is PRIVATE
-        ...(privacy === "PRIVATE" && {
-          sharedWithUserIds: [], // You can add a UI to select users
+        // Add sharedWithUserIds if privacy is COLLABORATORS
+        ...(privacy === "COLLABORATORS" && {
+          sharedWithUserIds: [],
         }),
       };
 
@@ -250,6 +255,32 @@ const NotesPage: React.FC = () => {
     }
   };
 
+  const handlePrivacyChange = (noteId: number, privacy: NotePrivacy) => {
+    if (privacy === "COLLABORATORS") {
+      // Open modal to select collaborators
+      setEditingNoteId(noteId);
+      setCollaboratorsModalOpen(true);
+    } else {
+      // For PUBLIC or PRIVATE, update immediately
+      handleNoteUpdate(noteId, {privacy, sharedWithUserIds: []});
+    }
+  };
+
+  const handleCollaboratorsSubmit = (selectedUserIds: number[]) => {
+    if (editingNoteId !== null) {
+      handleNoteUpdate(editingNoteId, {
+        privacy: "COLLABORATORS",
+        sharedWithUserIds: selectedUserIds,
+      });
+      setSuccess("Collaborators updated successfully!");
+    }
+  };
+
+  const handleEditCollaborators = (noteId: number) => {
+    setEditingNoteId(noteId);
+    setCollaboratorsModalOpen(true);
+  };
+
   const handleDragEnd = (result: DropResult) => {
     if (!result.destination) return;
 
@@ -282,6 +313,10 @@ const NotesPage: React.FC = () => {
   const handleCloseSnackbar = () => {
     setError(null);
     setSuccess(null);
+  };
+
+  const getEditingNote = (): NoteDto | undefined => {
+    return notes.find((note) => note.id === editingNoteId);
   };
 
   return (
@@ -438,9 +473,7 @@ const NotesPage: React.FC = () => {
                                           size="small"
                                           value={note.privacy}
                                           onChange={(e) =>
-                                            handleNoteUpdate(note.id, {
-                                              privacy: e.target.value as NotePrivacy
-                                            })
+                                            handlePrivacyChange(note.id, e.target.value as NotePrivacy)
                                           }
                                           sx={{
                                             fontWeight: 500,
@@ -456,28 +489,38 @@ const NotesPage: React.FC = () => {
                                           </MenuItem>
                                       </Select>
 
-                                    {note.privacy === "PRIVATE" &&
-                                      note.sharedWithUserIds &&
-                                      note.sharedWithUserIds.length > 0 && (
-                                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                                          <Typography variant="caption" sx={{mr: 1, alignSelf: "center"}}>
-                                            Shared with:
-                                          </Typography>
-                                          {note.sharedWithUserIds.map((userId) => (
-                                            <Chip
-                                              key={userId}
-                                              avatar={
-                                                <Avatar sx={{bgcolor: "secondary.main"}}>
-                                                  {getUserInitials(userId)}
-                                                </Avatar>
-                                              }
-                                              label={getUserDisplayName(userId)}
-                                              size="small"
-                                              sx={{m: 0.5}}
-                                            />
-                                          ))}
-                                        </Stack>
-                                      )}
+                                    {note.privacy === "COLLABORATORS" && (
+                                      <>
+                                        <Button
+                                          size="small"
+                                          variant="outlined"
+                                          onClick={() => handleEditCollaborators(note.id)}
+                                        >
+                                          Edit Collaborators
+                                        </Button>
+                                        {note.sharedWithUserIds &&
+                                          note.sharedWithUserIds.length > 0 && (
+                                            <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                                              <Typography variant="caption" sx={{mr: 1, alignSelf: "center"}}>
+                                                Shared with:
+                                              </Typography>
+                                              {note.sharedWithUserIds.map((userId) => (
+                                                <Chip
+                                                  key={userId}
+                                                  avatar={
+                                                    <Avatar sx={{bgcolor: "secondary.main"}}>
+                                                      {getUserInitials(userId)}
+                                                    </Avatar>
+                                                  }
+                                                  label={getUserDisplayName(userId)}
+                                                  size="small"
+                                                  sx={{m: 0.5}}
+                                                />
+                                              ))}
+                                            </Stack>
+                                          )}
+                                      </>
+                                    )}
                                   </Stack>}
                             </Grid>
 
@@ -500,6 +543,20 @@ const NotesPage: React.FC = () => {
             )}
           </Droppable>
         </DragDropContext>
+      )}
+
+      {/* Collaborators Modal */}
+      {currentUserId !== null && editingNoteId !== null && (
+        <CollaboratorsModal
+          open={collaboratorsModalOpen}
+          onClose={() => {
+            setCollaboratorsModalOpen(false);
+            setEditingNoteId(null);
+          }}
+          currentCollaboratorIds={getEditingNote()?.sharedWithUserIds || []}
+          currentUserId={currentUserId}
+          onSubmit={handleCollaboratorsSubmit}
+        />
       )}
 
       {/* Snackbar notifications */}
