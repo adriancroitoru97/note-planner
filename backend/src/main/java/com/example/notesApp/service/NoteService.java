@@ -11,6 +11,7 @@ import com.example.notesApp.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.List;
@@ -25,6 +26,7 @@ public class NoteService {
     private final UserService userService;
     private final WebSocketService webSocketService;
 
+    @Transactional
     public NoteDto createNote(CreateNoteRequest request, Authentication auth) {
         User author = userService.getCurrentUser(auth);
         Note note = new Note();
@@ -41,6 +43,11 @@ public class NoteService {
         }
 
         Note saved = noteRepository.save(note);
+
+        // Force initialization before leaving transaction
+        saved.getSharedWith().size();
+        saved.getAuthor().getId();
+
         NoteDto dto = toDto(saved);
 
         // Broadcast the creation
@@ -49,6 +56,7 @@ public class NoteService {
         return dto;
     }
 
+    @Transactional(readOnly = true)
     public NoteDto getNote(Long id, Authentication auth) {
         User current = userService.getCurrentUser(auth);
 
@@ -62,6 +70,7 @@ public class NoteService {
         return toDto(note);
     }
 
+    @Transactional(readOnly = true)
     public List<NoteDto> getAllVisibleNotes(Authentication auth) {
         User current = userService.getCurrentUser(auth);
         return noteRepository.findAllVisibleForUser(current)
@@ -70,6 +79,7 @@ public class NoteService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
     public List<NoteDto> getMyNotes(Authentication auth) {
         User current = userService.getCurrentUser(auth);
         return noteRepository.findByAuthor(current)
@@ -78,11 +88,19 @@ public class NoteService {
                 .toList();
     }
 
+    @Transactional
     public NoteDto updateNote(Long id, UpdateNoteRequest request, Authentication auth) {
         User current = userService.getCurrentUser(auth);
 
         Note note = noteRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Note not found"));
+
+        // Force initialization
+        note.getSharedWith().size();
+
+        // Store old state for WebSocket notification
+        NotePrivacy oldPrivacy = note.getPrivacy();
+        Set<User> oldSharedWith = new HashSet<>(note.getSharedWith());
 
         // only author/collaborators can update
         if (!note.getAuthor().getId().equals(current.getId()) &&
@@ -106,19 +124,29 @@ public class NoteService {
         }
 
         Note saved = noteRepository.save(note);
+
+        // Force initialization before leaving transaction
+        saved.getSharedWith().size();
+        saved.getAuthor().getId();
+
         NoteDto dto = toDto(saved);
 
-        // Broadcast the update
-        webSocketService.broadcastNoteUpdated(dto, saved);
+        // Broadcast the update with both old and new state
+        webSocketService.broadcastNoteUpdated(dto, saved, oldPrivacy, oldSharedWith);
 
         return dto;
     }
 
+    @Transactional
     public void deleteNote(Long id, Authentication auth) {
         User current = userService.getCurrentUser(auth);
 
         Note note = noteRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Note not found"));
+
+        // Force initialization
+        note.getSharedWith().size();
+        note.getAuthor().getId();
 
         // only author can delete
         if (!note.getAuthor().getId().equals(current.getId())) {

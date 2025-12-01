@@ -44,9 +44,6 @@ const getPrivacyColor = (privacy: NotePrivacy) => {
   }
 };
 
-const DEBOUNCE_DELAY = 500; // milliseconds
-const EDITING_NOTIFY_DELAY = 1000; // Delay before notifying others of editing
-
 const NotesPage: React.FC = () => {
   const [notes, setNotes] = useState<NoteDto[]>([]);
   const [loading, setLoading] = useState(false);
@@ -58,7 +55,7 @@ const NotesPage: React.FC = () => {
   // User cache for displaying names
   const [userCache, setUserCache] = useState<Map<number, UserDto>>(new Map());
 
-  // New note form state - only for creating state
+  // New note form state
   const [creating, setCreating] = useState(false);
 
   // Collaborators modal state
@@ -73,10 +70,6 @@ const NotesPage: React.FC = () => {
   const newTitleRef = useRef<HTMLInputElement>(null);
   const newTextRef = useRef<HTMLInputElement>(null);
   const newPrivacyRef = useRef<HTMLSelectElement>(null);
-
-  // Debounce timers for each note
-  const updateTimersRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
-  const editingNotifyTimersRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
 
   // Track if an update came from WebSocket to prevent echo
   const isRemoteUpdateRef = useRef(false);
@@ -104,7 +97,14 @@ const NotesPage: React.FC = () => {
     console.log('Note updated via WebSocket:', note);
     isRemoteUpdateRef.current = true;
     setNotes((prev) => {
-      return prev.map((n) => (n.id === note.id ? note : n));
+      const existingNote = prev.find(n => n.id === note.id);
+      if (existingNote) {
+        // Update existing note
+        return prev.map((n) => (n.id === note.id ? note : n));
+      } else {
+        // Note might have been shared with us, add it
+        return [note, ...prev];
+      }
     });
     setTimeout(() => {
       isRemoteUpdateRef.current = false;
@@ -200,7 +200,6 @@ const NotesPage: React.FC = () => {
           setUserCache(newCache);
         } catch (err) {
           console.error("Error loading user information:", err);
-          // Continue even if user loading fails
         }
       }
     } catch (err: unknown) {
@@ -213,16 +212,12 @@ const NotesPage: React.FC = () => {
 
   // Load current user and notes on component mount
   useEffect(() => {
-    loadNotes().then(() => {
-    });
+    loadNotes();
   }, []);
 
-  // Cleanup timers on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      updateTimersRef.current.forEach(timer => clearTimeout(timer));
-      editingNotifyTimersRef.current.forEach(timer => clearTimeout(timer));
-
       // Notify that we stopped editing
       if (locallyEditingNoteId) {
         sendEditingStatus(locallyEditingNoteId, false);
@@ -230,82 +225,41 @@ const NotesPage: React.FC = () => {
     };
   }, [locallyEditingNoteId, sendEditingStatus]);
 
-  // Notify editing status when user starts/stops editing
-  const notifyEditingStatus = useCallback((noteId: number, isEditing: boolean) => {
-    // Clear existing timer
-    const existingTimer = editingNotifyTimersRef.current.get(noteId);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-    }
-
-    if (isEditing) {
-      // Delay before notifying to avoid spam
-      const timer = setTimeout(() => {
-        sendEditingStatus(noteId, true);
-        setLocallyEditingNoteId(noteId);
-        editingNotifyTimersRef.current.delete(noteId);
-      }, EDITING_NOTIFY_DELAY);
-
-      editingNotifyTimersRef.current.set(noteId, timer);
-    } else {
-      // Immediately notify stop editing
-      sendEditingStatus(noteId, false);
-      setLocallyEditingNoteId(null);
-    }
-  }, [sendEditingStatus]);
-
-  // Debounced update function
-  const debouncedUpdateNote = useCallback((noteId: number, updatedNote: NoteDto) => {
+  // Update note immediately
+  const updateNoteImmediately = useCallback(async (noteId: number, updatedNote: NoteDto) => {
     // Don't send update if this was triggered by a remote update
     if (isRemoteUpdateRef.current) {
       return;
     }
 
-    // Clear existing timer for this note
-    const existingTimer = updateTimersRef.current.get(noteId);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
+    try {
+      const request: UpdateNoteRequest = {
+        title: updatedNote.title,
+        text: updatedNote.text,
+        privacy: updatedNote.privacy,
+        ...(updatedNote.privacy === "PRIVATE" && {
+          sharedWithUserIds: updatedNote.sharedWithUserIds || [],
+        }),
+      };
+
+      await notesApi.updateNote(noteId, request);
+      // WebSocket will broadcast the change to others
+    } catch (err: unknown) {
+      setError("Failed to update note");
+      console.error("Error updating note:", err);
+      // Revert on error
+      await loadNotes();
     }
-
-    // Set new timer
-    const timer = setTimeout(async () => {
-      try {
-        const request: UpdateNoteRequest = {
-          title: updatedNote.title,
-          text: updatedNote.text,
-          privacy: updatedNote.privacy,
-          ...(updatedNote.privacy === "PRIVATE" && {
-            sharedWithUserIds: updatedNote.sharedWithUserIds || [],
-          }),
-        };
-
-        await notesApi.updateNote(noteId, request);
-        updateTimersRef.current.delete(noteId);
-
-        // Stop editing notification after update
-        notifyEditingStatus(noteId, false);
-      } catch (err: unknown) {
-        setError("Failed to update note");
-        console.error("Error updating note:", err);
-        // Revert on error
-        await loadNotes();
-      }
-    }, DEBOUNCE_DELAY);
-
-    updateTimersRef.current.set(noteId, timer);
-  }, [notifyEditingStatus]);
+  }, []);
 
   // Generic update handler for any note field
   const handleNoteUpdate = (noteId: number, updates: Partial<NoteDto>) => {
-    // Start editing notification
-    notifyEditingStatus(noteId, true);
-
     setNotes((prev) => {
       return prev.map((note) => {
         if (note.id === noteId) {
           const updatedNote = {...note, ...updates};
-          // Trigger debounced update
-          debouncedUpdateNote(noteId, updatedNote);
+          // Trigger immediate update
+          updateNoteImmediately(noteId, updatedNote);
           return updatedNote;
         }
         return note;
@@ -331,7 +285,6 @@ const NotesPage: React.FC = () => {
         title,
         text,
         privacy,
-        // Add sharedWithUserIds if privacy is PRIVATE
         ...(privacy === "PRIVATE" && {
           sharedWithUserIds: [],
         }),
@@ -357,13 +310,6 @@ const NotesPage: React.FC = () => {
   const handleDelete = async (id: number) => {
     if (!window.confirm("Are you sure you want to delete this note?")) {
       return;
-    }
-
-    // Clear any pending updates for this note
-    const timer = updateTimersRef.current.get(id);
-    if (timer) {
-      clearTimeout(timer);
-      updateTimersRef.current.delete(id);
     }
 
     try {
@@ -409,9 +355,6 @@ const NotesPage: React.FC = () => {
     const [moved] = reordered.splice(result.source.index, 1);
     reordered.splice(result.destination.index, 0, moved);
     setNotes(reordered);
-
-    // Note: You might want to persist the order to the backend
-    // This would require adding an endpoint to save note order
   };
 
   const getInitials = (name: string) =>
@@ -448,6 +391,19 @@ const NotesPage: React.FC = () => {
 
   const getEditorsForNote = (noteId: number): EditingUser[] => {
     return editingUsers.get(noteId) || [];
+  };
+
+  // Handle editing status
+  const handleFocus = (noteId: number) => {
+    sendEditingStatus(noteId, true);
+    setLocallyEditingNoteId(noteId);
+  };
+
+  const handleBlur = (noteId: number) => {
+    sendEditingStatus(noteId, false);
+    if (locallyEditingNoteId === noteId) {
+      setLocallyEditingNoteId(null);
+    }
   };
 
   return (
@@ -615,6 +571,8 @@ const NotesPage: React.FC = () => {
                                   onChange={(e) =>
                                     handleNoteUpdate(note.id, {title: e.target.value})
                                   }
+                                  onFocus={() => handleFocus(note.id)}
+                                  onBlur={() => handleBlur(note.id)}
                                   sx={{mb: 1}}
                                   slotProps={{
                                     input: {
@@ -631,6 +589,8 @@ const NotesPage: React.FC = () => {
                                   onChange={(e) =>
                                     handleNoteUpdate(note.id, {text: e.target.value})
                                   }
+                                  onFocus={() => handleFocus(note.id)}
+                                  onBlur={() => handleBlur(note.id)}
                                 />
 
                                 {isMyNote(note) &&
