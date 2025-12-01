@@ -78,9 +78,12 @@ public class NoteService {
         Note note = noteRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Note not found"));
 
-        // only author can update
-        if (!note.getAuthor().getId().equals(current.getId())) {
-            throw new RuntimeException("Only author can update the note");
+        // only author/collaborators can update
+        if (!note.getAuthor().getId().equals(current.getId()) &&
+                note.getSharedWith().stream().noneMatch(user -> user.getId().equals(current.getId())) &&
+                note.getPrivacy() != NotePrivacy.PUBLIC
+        ) {
+            throw new RuntimeException("Only author/collaborators can update the note");
         }
 
         note.setTitle(request.getTitle());
