@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from "react";
+import React, {useCallback, useEffect, useRef, useState} from "react";
 import {
   Alert,
   Avatar,
@@ -42,6 +42,8 @@ const getPrivacyColor = (privacy: NotePrivacy) => {
   }
 };
 
+const DEBOUNCE_DELAY = 500; // milliseconds
+
 const NotesPage: React.FC = () => {
   const [notes, setNotes] = useState<NoteDto[]>([]);
   const [loading, setLoading] = useState(false);
@@ -57,6 +59,9 @@ const NotesPage: React.FC = () => {
   const [newText, setNewText] = useState("");
   const [newPrivacy, setNewPrivacy] = useState<NotePrivacy>("PUBLIC");
   const [creating, setCreating] = useState(false);
+
+  // Debounce timers for each note
+  const updateTimersRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
 
   const isMyNote = (note: NoteDto): boolean => {
     return currentUserId !== null && note.authorId === currentUserId;
@@ -124,6 +129,61 @@ const NotesPage: React.FC = () => {
     });
   }, []);
 
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      updateTimersRef.current.forEach(timer => clearTimeout(timer));
+    };
+  }, []);
+
+  // Debounced update function
+  const debouncedUpdateNote = useCallback((noteId: number, updatedNote: NoteDto) => {
+    // Clear existing timer for this note
+    const existingTimer = updateTimersRef.current.get(noteId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    // Set new timer
+    const timer = setTimeout(async () => {
+      try {
+        const request: UpdateNoteRequest = {
+          title: updatedNote.title,
+          text: updatedNote.text,
+          privacy: updatedNote.privacy,
+          ...(updatedNote.privacy === "PRIVATE" && {
+            sharedWithUserIds: updatedNote.sharedWithUserIds || [],
+          }),
+        };
+
+        await notesApi.updateNote(noteId, request);
+        updateTimersRef.current.delete(noteId);
+      } catch (err: unknown) {
+        setError("Failed to update note");
+        console.error("Error updating note:", err);
+        // Revert on error
+        await loadNotes();
+      }
+    }, DEBOUNCE_DELAY);
+
+    updateTimersRef.current.set(noteId, timer);
+  }, []);
+
+  // Generic update handler for any note field
+  const handleNoteUpdate = (noteId: number, updates: Partial<NoteDto>) => {
+    setNotes((prev) => {
+      return prev.map((note) => {
+        if (note.id === noteId) {
+          const updatedNote = {...note, ...updates};
+          // Trigger debounced update
+          debouncedUpdateNote(noteId, updatedNote);
+          return updatedNote;
+        }
+        return note;
+      });
+    });
+  };
+
   const handleAddNote = async () => {
     if (!newTitle.trim()) {
       setError("Title is required");
@@ -165,6 +225,13 @@ const NotesPage: React.FC = () => {
       return;
     }
 
+    // Clear any pending updates for this note
+    const timer = updateTimersRef.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      updateTimersRef.current.delete(id);
+    }
+
     try {
       await notesApi.deleteNote(id);
       setNotes((prev) => prev.filter((n) => n.id !== id));
@@ -172,55 +239,6 @@ const NotesPage: React.FC = () => {
     } catch (err: unknown) {
       setError("Failed to delete note");
       console.error("Error deleting note:", err);
-    }
-  };
-
-  const handleTextChange = async (id: number, text: string) => {
-    // Optimistically update UI
-    setNotes((prev) => prev.map((n) => (n.id === id ? {...n, text} : n)));
-
-    // Debounce the API call - you might want to implement proper debouncing
-    try {
-      const request: UpdateNoteRequest = {text};
-      await notesApi.updateNote(id, request);
-    } catch (err: unknown) {
-      setError("Failed to update note text");
-      console.error("Error updating note:", err);
-      // Revert on error
-      await loadNotes();
-    }
-  };
-
-  const handleTitleChange = async (id: number, title: string) => {
-    // Optimistically update UI
-    setNotes((prev) => prev.map((n) => (n.id === id ? {...n, title} : n)));
-
-    try {
-      const request: UpdateNoteRequest = {title};
-      await notesApi.updateNote(id, request);
-    } catch (err: unknown) {
-      setError("Failed to update note title");
-      console.error("Error updating note:", err);
-      // Revert on error
-      loadNotes();
-    }
-  };
-
-  const handlePrivacyChange = async (id: number, privacy: NotePrivacy) => {
-    try {
-      const request: UpdateNoteRequest = {
-        privacy,
-        ...(privacy === "PRIVATE" && {
-          sharedWithUserIds: [], // You can add a UI to select users
-        }),
-      };
-
-      const updatedNote = await notesApi.updateNote(id, request);
-      setNotes((prev) => prev.map((n) => (n.id === id ? updatedNote : n)));
-      setSuccess("Privacy updated successfully!");
-    } catch (err: unknown) {
-      setError("Failed to update privacy");
-      console.error("Error updating privacy:", err);
     }
   };
 
@@ -380,14 +398,13 @@ const NotesPage: React.FC = () => {
                                 fullWidth
                                 value={note.title}
                                 onChange={(e) =>
-                                  handleTitleChange(note.id, e.target.value)
-                                }
-                                onBlur={(e) =>
-                                  handleTitleChange(note.id, e.target.value)
+                                  handleNoteUpdate(note.id, {title: e.target.value})
                                 }
                                 sx={{mb: 1}}
-                                InputProps={{
-                                  style: {fontWeight: "bold", fontSize: "1.1rem"},
+                                slotProps={{
+                                  input: {
+                                    style: {fontWeight: "bold", fontSize: "1.1rem"},
+                                  }
                                 }}
                               />
                               <TextField
@@ -397,10 +414,7 @@ const NotesPage: React.FC = () => {
                                 minRows={2}
                                 value={note.text}
                                 onChange={(e) =>
-                                  handleTextChange(note.id, e.target.value)
-                                }
-                                onBlur={(e) =>
-                                  handleTextChange(note.id, e.target.value)
+                                  handleNoteUpdate(note.id, {text: e.target.value})
                                 }
                               />
 
@@ -416,10 +430,9 @@ const NotesPage: React.FC = () => {
                                           size="small"
                                           value={note.privacy}
                                           onChange={(e) =>
-                                            handlePrivacyChange(
-                                              note.id,
-                                              e.target.value as NotePrivacy
-                                            )
+                                            handleNoteUpdate(note.id, {
+                                              privacy: e.target.value as NotePrivacy
+                                            })
                                           }
                                           sx={{
                                             fontWeight: 500,
