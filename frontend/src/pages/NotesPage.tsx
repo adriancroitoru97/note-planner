@@ -38,8 +38,6 @@ const getPrivacyColor = (privacy: NotePrivacy) => {
       return "success";
     case "PRIVATE":
       return "error";
-    case "COLLABORATORS":
-      return "warning";
   }
 };
 
@@ -158,7 +156,7 @@ const NotesPage: React.FC = () => {
           title: updatedNote.title,
           text: updatedNote.text,
           privacy: updatedNote.privacy,
-          ...(updatedNote.privacy === "COLLABORATORS" && {
+          ...(updatedNote.privacy === "PRIVATE" && {
             sharedWithUserIds: updatedNote.sharedWithUserIds || [],
           }),
         };
@@ -209,8 +207,8 @@ const NotesPage: React.FC = () => {
         title,
         text,
         privacy,
-        // Add sharedWithUserIds if privacy is COLLABORATORS
-        ...(privacy === "COLLABORATORS" && {
+        // Add sharedWithUserIds if privacy is PRIVATE
+        ...(privacy === "PRIVATE" && {
           sharedWithUserIds: [],
         }),
       };
@@ -256,20 +254,20 @@ const NotesPage: React.FC = () => {
   };
 
   const handlePrivacyChange = (noteId: number, privacy: NotePrivacy) => {
-    if (privacy === "COLLABORATORS") {
+    if (privacy === "PRIVATE") {
       // Open modal to select collaborators
       setEditingNoteId(noteId);
       setCollaboratorsModalOpen(true);
     } else {
-      // For PUBLIC or PRIVATE, update immediately
+      // For PUBLIC update immediately
       handleNoteUpdate(noteId, {privacy, sharedWithUserIds: []});
     }
   };
 
-  const handleCollaboratorsSubmit = (selectedUserIds: number[]) => {
+  const handleCollaboratorsSubmit = async (selectedUserIds: number[]) => {
     if (editingNoteId !== null) {
       handleNoteUpdate(editingNoteId, {
-        privacy: "COLLABORATORS",
+        privacy: "PRIVATE",
         sharedWithUserIds: selectedUserIds,
       });
       setSuccess("Collaborators updated successfully!");
@@ -364,7 +362,6 @@ const NotesPage: React.FC = () => {
             >
               <MenuItem value="PUBLIC">Public</MenuItem>
               <MenuItem value="PRIVATE">Private</MenuItem>
-              <MenuItem value="COLLABORATORS">Collaborators</MenuItem>
             </Select>
           </Grid>
         </Grid>
@@ -484,15 +481,12 @@ const NotesPage: React.FC = () => {
                                       >
                                           <MenuItem value="PUBLIC">Public</MenuItem>
                                           <MenuItem value="PRIVATE">Private</MenuItem>
-                                          <MenuItem value="COLLABORATORS">
-                                              Collaborators
-                                          </MenuItem>
                                       </Select>
 
-                                    {note.privacy === "COLLABORATORS" && (
+                                    {note.privacy === "PRIVATE" && (
                                       <>
                                         <Button
-                                          size="small"
+                                          size="large"
                                           variant="outlined"
                                           onClick={() => handleEditCollaborators(note.id)}
                                         >
@@ -508,7 +502,7 @@ const NotesPage: React.FC = () => {
                                                 <Chip
                                                   key={userId}
                                                   avatar={
-                                                    <Avatar sx={{bgcolor: "secondary.main"}}>
+                                                    <Avatar style={{color: "white"}} sx={{bgcolor: "primary.main"}}>
                                                       {getUserInitials(userId)}
                                                     </Avatar>
                                                   }

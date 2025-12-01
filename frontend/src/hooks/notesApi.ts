@@ -41,7 +41,7 @@ apiClient.interceptors.response.use(
 );
 
 // Type definitions matching your backend DTOs
-export type NotePrivacy = 'PUBLIC' | 'PRIVATE' | 'COLLABORATORS';
+export type NotePrivacy = 'PUBLIC' | 'PRIVATE';
 
 export interface NoteDto {
   id: number;
