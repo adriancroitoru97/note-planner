@@ -74,13 +74,37 @@ const NotesPage: React.FC = () => {
   // Track if an update came from WebSocket to prevent echo
   const isRemoteUpdateRef = useRef(false);
 
+  // Queue for pending updates to prevent race conditions
+  const updateQueueRef = useRef<Map<number, Promise<void>>>(new Map());
+
   const isMyNote = (note: NoteDto): boolean => {
     return currentUserId !== null && note.authorId === currentUserId;
   };
 
+  // Check if current user can access a note
+  const canAccessNote = useCallback((note: NoteDto): boolean => {
+    if (!currentUserId) return false;
+
+    // Author can always access
+    if (note.authorId === currentUserId) return true;
+
+    // Public notes are accessible to everyone
+    if (note.privacy === "PUBLIC") return true;
+
+    // Check if user is in shared list
+    return note.sharedWithUserIds?.includes(currentUserId) || false;
+  }, [currentUserId]);
+
   // WebSocket handlers
   const handleNoteCreated = useCallback((note: NoteDto) => {
     console.log('Note created via WebSocket:', note);
+
+    // Only add if we can access it
+    if (!canAccessNote(note)) {
+      console.log('Cannot access note, skipping');
+      return;
+    }
+
     setNotes((prev) => {
       // Check if note already exists
       if (prev.find(n => n.id === note.id)) {
@@ -91,25 +115,39 @@ const NotesPage: React.FC = () => {
     if (note.authorId !== currentUserId) {
       setSuccess(`New note created by ${getUserDisplayName(note.authorId)}`);
     }
-  }, [currentUserId]);
+  }, [currentUserId, canAccessNote]);
 
   const handleNoteUpdated = useCallback((note: NoteDto) => {
     console.log('Note updated via WebSocket:', note);
     isRemoteUpdateRef.current = true;
+
     setNotes((prev) => {
       const existingNote = prev.find(n => n.id === note.id);
+
+      // Check if we can still access this note
+      if (!canAccessNote(note)) {
+        console.log('Lost access to note, removing from view');
+        // We lost access (removed as collaborator or changed to private)
+        if (existingNote) {
+          setSuccess('You no longer have access to a note');
+        }
+        return prev.filter(n => n.id !== note.id);
+      }
+
       if (existingNote) {
         // Update existing note
         return prev.map((n) => (n.id === note.id ? note : n));
       } else {
         // Note might have been shared with us, add it
+        setSuccess('A note was shared with you');
         return [note, ...prev];
       }
     });
+
     setTimeout(() => {
       isRemoteUpdateRef.current = false;
     }, 100);
-  }, []);
+  }, [canAccessNote]);
 
   const handleNoteDeleted = useCallback((noteId: number) => {
     console.log('Note deleted via WebSocket:', noteId);
@@ -225,31 +263,48 @@ const NotesPage: React.FC = () => {
     };
   }, [locallyEditingNoteId, sendEditingStatus]);
 
-  // Update note immediately
+  // Update note with queueing to prevent race conditions
   const updateNoteImmediately = useCallback(async (noteId: number, updatedNote: NoteDto) => {
     // Don't send update if this was triggered by a remote update
     if (isRemoteUpdateRef.current) {
       return;
     }
 
-    try {
-      const request: UpdateNoteRequest = {
-        title: updatedNote.title,
-        text: updatedNote.text,
-        privacy: updatedNote.privacy,
-        ...(updatedNote.privacy === "PRIVATE" && {
-          sharedWithUserIds: updatedNote.sharedWithUserIds || [],
-        }),
-      };
-
-      await notesApi.updateNote(noteId, request);
-      // WebSocket will broadcast the change to others
-    } catch (err: unknown) {
-      setError("Failed to update note");
-      console.error("Error updating note:", err);
-      // Revert on error
-      await loadNotes();
+    // Wait for any pending update on this note to complete
+    const existingUpdate = updateQueueRef.current.get(noteId);
+    if (existingUpdate) {
+      await existingUpdate;
     }
+
+    // Create new update promise
+    const updatePromise = (async () => {
+      try {
+        const request: UpdateNoteRequest = {
+          title: updatedNote.title,
+          text: updatedNote.text,
+          privacy: updatedNote.privacy,
+          ...(updatedNote.privacy === "PRIVATE" && {
+            sharedWithUserIds: updatedNote.sharedWithUserIds || [],
+          }),
+        };
+
+        await notesApi.updateNote(noteId, request);
+        // WebSocket will broadcast the change to others
+      } catch (err: unknown) {
+        setError("Failed to update note");
+        console.error("Error updating note:", err);
+        // Revert on error
+        await loadNotes();
+      } finally {
+        // Remove from queue when done
+        updateQueueRef.current.delete(noteId);
+      }
+    })();
+
+    // Store in queue
+    updateQueueRef.current.set(noteId, updatePromise);
+
+    return updatePromise;
   }, []);
 
   // Generic update handler for any note field
