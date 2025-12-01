@@ -47,6 +47,7 @@ const NotesPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
 
   // User cache for displaying names
   const [userCache, setUserCache] = useState<Map<number, UserDto>>(new Map());
@@ -57,13 +58,30 @@ const NotesPage: React.FC = () => {
   const [newPrivacy, setNewPrivacy] = useState<NotePrivacy>("PUBLIC");
   const [creating, setCreating] = useState(false);
 
+  const isMyNote = (note: NoteDto): boolean => {
+    return currentUserId !== null && note.authorId === currentUserId;
+  };
+
   const loadNotes = async () => {
     setLoading(true);
     setError(null);
     try {
-      // You can switch between getAllVisibleNotes() and getMyNotes() based on your needs
+      // Load current user first
+      const currentUser = await usersApi.getCurrentUser();
+      setCurrentUserId(currentUser.id);
+      setUserCache(prev => new Map(prev).set(currentUser.id, currentUser));
+
+      // Load notes
       const data = await notesApi.getAllVisibleNotes();
-      setNotes(data);
+
+      // Sort notes: my notes first, then others
+      const sortedNotes = data.sort((a, b) => {
+        if (a.authorId === currentUser.id && b.authorId !== currentUser.id) return -1;
+        if (a.authorId !== currentUser.id && b.authorId === currentUser.id) return 1;
+        return 0;
+      });
+
+      setNotes(sortedNotes);
 
       // Load user information for all unique user IDs in the notes
       const userIds = new Set<number>();
@@ -87,9 +105,6 @@ const NotesPage: React.FC = () => {
             }
           });
           setUserCache(newCache);
-
-          const currentUser = await usersApi.getCurrentUser();
-          setUserCache(prev => new Map(prev).set(currentUser.id, currentUser));
         } catch (err) {
           console.error("Error loading user information:", err);
           // Continue even if user loading fails
@@ -341,7 +356,10 @@ const NotesPage: React.FC = () => {
                           mb: 2,
                           p: 2,
                           transition: "background-color 0.2s",
-                          backgroundColor: snapshot.isDragging ? "#f5f5f5" : "white",
+                          backgroundColor: snapshot.isDragging ? (isMyNote(note) ? "#e0e0d9" : "#f7f6b9") :
+                            isMyNote(note)
+                              ? "white"
+                              : "#faf9d6",
                           boxShadow: snapshot.isDragging
                             ? 4
                             : "0px 2px 6px rgba(0,0,0,0.1)",
@@ -386,67 +404,69 @@ const NotesPage: React.FC = () => {
                                 }
                               />
 
-                              <Stack
-                                direction="row"
-                                spacing={1}
-                                alignItems="center"
-                                sx={{mt: 1}}
-                                flexWrap="wrap"
-                              >
-                                <Select
-                                  size="small"
-                                  value={note.privacy}
-                                  onChange={(e) =>
-                                    handlePrivacyChange(
-                                      note.id,
-                                      e.target.value as NotePrivacy
-                                    )
-                                  }
-                                  sx={{
-                                    fontWeight: 500,
-                                    backgroundColor: (theme) =>
-                                      theme.palette[getPrivacyColor(note.privacy)]
-                                        ?.light,
-                                  }}
-                                >
-                                  <MenuItem value="PUBLIC">Public</MenuItem>
-                                  <MenuItem value="PRIVATE">Private</MenuItem>
-                                  <MenuItem value="COLLABORATORS">
-                                    Collaborators
-                                  </MenuItem>
-                                </Select>
-
-                                {note.privacy === "PRIVATE" &&
-                                  note.sharedWithUserIds &&
-                                  note.sharedWithUserIds.length > 0 && (
-                                    <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                                      <Typography variant="caption" sx={{mr: 1, alignSelf: "center"}}>
-                                        Shared with:
-                                      </Typography>
-                                      {note.sharedWithUserIds.map((userId) => (
-                                        <Chip
-                                          key={userId}
-                                          avatar={
-                                            <Avatar sx={{bgcolor: "secondary.main"}}>
-                                              {getUserInitials(userId)}
-                                            </Avatar>
-                                          }
-                                          label={getUserDisplayName(userId)}
+                              {isMyNote(note) &&
+                                  <Stack
+                                      direction="row"
+                                      spacing={1}
+                                      alignItems="center"
+                                      sx={{mt: 1}}
+                                      flexWrap="wrap"
+                                  >
+                                      <Select
                                           size="small"
-                                          sx={{m: 0.5}}
-                                        />
-                                      ))}
-                                    </Stack>
-                                  )}
-                              </Stack>
+                                          value={note.privacy}
+                                          onChange={(e) =>
+                                            handlePrivacyChange(
+                                              note.id,
+                                              e.target.value as NotePrivacy
+                                            )
+                                          }
+                                          sx={{
+                                            fontWeight: 500,
+                                            backgroundColor: (theme) =>
+                                              theme.palette[getPrivacyColor(note.privacy)]
+                                                ?.light,
+                                          }}
+                                      >
+                                          <MenuItem value="PUBLIC">Public</MenuItem>
+                                          <MenuItem value="PRIVATE">Private</MenuItem>
+                                          <MenuItem value="COLLABORATORS">
+                                              Collaborators
+                                          </MenuItem>
+                                      </Select>
+
+                                    {note.privacy === "PRIVATE" &&
+                                      note.sharedWithUserIds &&
+                                      note.sharedWithUserIds.length > 0 && (
+                                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                                          <Typography variant="caption" sx={{mr: 1, alignSelf: "center"}}>
+                                            Shared with:
+                                          </Typography>
+                                          {note.sharedWithUserIds.map((userId) => (
+                                            <Chip
+                                              key={userId}
+                                              avatar={
+                                                <Avatar sx={{bgcolor: "secondary.main"}}>
+                                                  {getUserInitials(userId)}
+                                                </Avatar>
+                                              }
+                                              label={getUserDisplayName(userId)}
+                                              size="small"
+                                              sx={{m: 0.5}}
+                                            />
+                                          ))}
+                                        </Stack>
+                                      )}
+                                  </Stack>}
                             </Grid>
-                            <Grid>
-                              <IconButton
-                                color="error"
-                                onClick={() => handleDelete(note.id)}
-                              >
-                                <DeleteIcon/>
-                              </IconButton>
+
+                            <Grid>{isMyNote(note) &&
+                                <IconButton
+                                    color="error"
+                                    onClick={() => handleDelete(note.id)}
+                                >
+                                    <DeleteIcon/>
+                                </IconButton>}
                             </Grid>
                           </Grid>
                         </CardContent>
