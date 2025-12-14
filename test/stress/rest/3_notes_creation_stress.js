@@ -1,8 +1,8 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
 
-import { EXISTING_USER, BASE_URL, PATHS, DEFAULT_HEADERS } from "../config/config.js";
-import { buildCreateNoteRequest } from "../data/note.js";
+import { EXISTING_USER, BASE_URL, PATHS, DEFAULT_HEADERS } from "../../config/config.js";
+import { buildCreateNoteRequest } from "../../data/note.js";
 
 /*
 ===============================================================================

@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test_stress": "k6 run ../test/stress/2_login_stress.js --http-debug='full'"
+    "rest_login_stress": "k6 run ../test/stress/rest/1_login_stress.js --http-debug='full'",
+    "rest_register_stress": "k6 run ../test/stress/rest/2_register_stress.js --http-debug='full'",
+    "rest_note_creation_stress": "k6 run ../test/stress/rest/3_note_creation_stress.js --http-debug='full'"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

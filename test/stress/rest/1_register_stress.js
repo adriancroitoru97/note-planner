@@ -1,8 +1,8 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
 
-import { BASE_URL, PATHS, DEFAULT_HEADERS } from "../config/config.js";
-import { buildRegisterUser } from "../data/user.js";
+import { BASE_URL, PATHS, DEFAULT_HEADERS } from "../../config/config.js";
+import { buildRegisterUser } from "../../data/user.js";
 
 /*
 ===============================================================================
