@@ -3,8 +3,11 @@
  * Centralized configuration for base URL and API paths.
  */
 
-/** Base url for endpoint paths */
+/** Base url for http endpoint paths */
 export const BASE_URL = "http://localhost:8080";
+
+/** Base url for websocket endpoint paths */
+export const WS_URL = "ws://localhost:8080/ws/websocket";
 
 /** Endpoint paths */
 export const PATHS = {
