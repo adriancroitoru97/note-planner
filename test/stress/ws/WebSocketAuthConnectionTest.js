@@ -1,12 +1,13 @@
-import ws from 'k6/ws';
-import http from 'k6/http';
-import { check, sleep } from 'k6';
+import ws from "k6/ws";
+import http from "k6/http";
+import { check, sleep } from "k6";
+import { BASE_URL, PATHS, DEFAULT_HEADERS } from "../../config/config.js";
 
-import { BASE_URL, WS_URL, PATHS, DEFAULT_HEADERS } from "../../config/config.js";
+const WS_URL = "ws://localhost:8080/ws/websocket";
 
 export const options = {
     scenarios: {
-        stress_ws_notes: {
+        stress_full_flow: {
             executor: "ramping-vus",
             startVUs: 0,
             stages: [
@@ -18,131 +19,120 @@ export const options = {
         },
     },
     thresholds: {
+        http_req_failed: ["rate<0.01"],
+        http_req_duration: ["p(95)<800"],
         ws_connecting: ["p(95)<800"],
         checks: ["rate>0.99"],
-        // ws_msgs_sent: ["count>0"],
-        // ws_msgs_received: ["count>0"],
     },
 };
 
 function uniqueEmail() {
-    return `k6_vu${__VU}_iter${__ITER}_${Date.now()}@test.local`;
+    return `k6_full_vu${__VU}_iter${__ITER}_${Date.now()}@test.local`;
 }
 
 function extractToken(loginRes) {
-    const contentType = loginRes.headers['Content-Type'] || '';
+    const contentType = loginRes.headers["Content-Type"] || "";
     let token;
 
-    if (contentType.includes('application/json')) {
-        try {
-            const body = loginRes.json();
-            token = body.token || body.accessToken || body.access_token || body;
-        } catch (e) {
-            token = loginRes.body;
-        }
+    if (contentType.includes("application/json")) {
+        const body = loginRes.json();
+        token = body.token || body.accessToken || body.access_token;
     } else {
         token = loginRes.body;
     }
 
-    if (typeof token === 'string') token = token.replace(/^"|"$/g, '').trim();
+    if (typeof token === "string") token = token.replace(/^"|"$/g, "").trim();
     return token;
 }
 
 export default function () {
-    const userPayload = {
-        email: uniqueEmail(),
-        password: '1234',
-    };
+    const email = uniqueEmail();
+    const password = "1234";
 
-    // 0. Register user (same user used for login)
-    const registerRes = http.post(
-        `${BASE_URL}${PATHS.REGISTER}`,
-        JSON.stringify(userPayload),
-        {
-            headers: DEFAULT_HEADERS, // assumes it includes Content-Type: application/json
-            tags: { endpoint: "register" },
-        }
-    );
-
-    const registerOk = check(registerRes, {
-        "registered status is 200/201": (r) => r.status === 200 || r.status === 201,
+    // 1) Register
+    const regRes = http.post(`${BASE_URL}${PATHS.REGISTER}`, JSON.stringify({ email, password }), {
+        headers: DEFAULT_HEADERS,
+        tags: { endpoint: "register" },
     });
 
-    if (!registerOk) {
-        console.error(`VU ${__VU} - Register failed with status ${registerRes.status}: ${registerRes.body}`);
+    if (!check(regRes, { "register status is 200/201": (r) => r.status === 200 || r.status === 201 })) {
         return;
     }
 
-    // 1. Authenticate to get a token (same email/password as registered)
-    const loginRes = http.post(
-        `${BASE_URL}${PATHS.AUTHENTICATE}`,
-        JSON.stringify({
-            email: userPayload.email,
-            password: userPayload.password,
-        }),
-        {
-            headers: { 'Content-Type': 'application/json' },
-            tags: { endpoint: "auth" },
-        }
-    );
+    // 2) Login
+    const loginRes = http.post(`${BASE_URL}${PATHS.AUTHENTICATE}`, JSON.stringify({ email, password }), {
+        headers: DEFAULT_HEADERS,
+        tags: { endpoint: "auth" },
+    });
 
-    if (!check(loginRes, { 'logged in successfully': (r) => r.status === 200 })) {
-        console.error(`VU ${__VU} - Login failed with status ${loginRes.status}: ${loginRes.body}`);
-        return;
-    }
+    if (!check(loginRes, { "login status is 200": (r) => r.status === 200 })) return;
 
     const token = extractToken(loginRes);
+    if (!token || token.length < 10) return;
 
-    if (!token || token.length < 10) {
-        console.error(`VU ${__VU} - Could not extract a valid token. Body was: ${loginRes.body}`);
-        return;
-    }
-
-    // 3. Connect to WebSocket (UNCHANGED)
-    const url = WS_URL;
-    const params = { tags: { my_tag: 'hello' } };
-
-    const res = ws.connect(url, params, function (socket) {
-        socket.on('open', function () {
-            // Send STOMP CONNECT frame
-            socket.send(`CONNECT\naccept-version:1.1,1.0\nheart-beat:10000,10000\nAuthorization:Bearer ${token}\n\n\u0000`);
+    // 3) WS connect + STOMP + create note once connected
+    const wsRes = ws.connect(WS_URL, { tags: { endpoint: "ws-stomp" } }, function (socket) {
+        socket.on("open", function () {
+            socket.send(
+                `CONNECT\naccept-version:1.1,1.0\nheart-beat:10000,10000\nAuthorization:Bearer ${token}\n\n\u0000`
+            );
         });
 
-        socket.on('message', function (data) {
-            if (data.includes('CONNECTED')) {
-                // Subscribe to topics
+        socket.on("message", function (data) {
+            if (data.includes("CONNECTED")) {
+                // Subscribe (same as your script)
                 socket.send(`SUBSCRIBE\nid:sub-0\ndestination:/topic/notes\n\n\u0000`);
                 socket.send(`SUBSCRIBE\nid:sub-1\ndestination:/topic/notes/editing\n\n\u0000`);
                 socket.send(`SUBSCRIBE\nid:sub-2\ndestination:/user/queue/notes\n\n\u0000`);
+                socket.send(`SUBSCRIBE\nid:sub-3\ndestination:/user/queue/notes/editing\n\n\u0000`);
 
-                // Periodically send editing status updates
+                // Create a note (HTTP) once per connection
+                // NOTE: Adjust PATHS.NOTES (or payload fields) to match your API.
+                const createRes = http.post(
+                    `${BASE_URL}${PATHS.NOTES}`,
+                    JSON.stringify({
+                        title: `k6 note vu${__VU} iter${__ITER}`,
+                        content: "created under load",
+                    }),
+                    {
+                        headers: {
+                            ...DEFAULT_HEADERS,
+                            Authorization: `Bearer ${token}`,
+                        },
+                        tags: { endpoint: "notes-create" },
+                    }
+                );
+
+                check(createRes, {
+                    "note create status is 200/201": (r) => r.status === 200 || r.status === 201,
+                });
+
+                // Periodically send editing status updates (same as your script)
                 socket.setInterval(function () {
-                    const payload = JSON.stringify({
-                        noteId: 1,
-                        isEditing: true,
-                    });
+                    const payload = JSON.stringify({ noteId: 1, isEditing: true });
                     socket.send(`SEND\ndestination:/app/notes/editing\ncontent-type:application/json\n\n${payload}\u0000`);
-                }, 5000); // Send every 5 seconds
+                }, 5000);
             }
 
-            // Handle Heartbeats (Server sends \n)
-            if (data === '\n') {
-                socket.send('\n');
+            // Heartbeats
+            if (data === "\n") {
+                socket.send("\n");
             }
         });
 
-        socket.on('close', function () {
-            console.log(`VU ${__VU} disconnected`);
+        socket.on("close", function () {
+            // console.log(`VU ${__VU} disconnected`);
         });
 
-        socket.on('error', function (e) {
-            console.error(`VU ${__VU} error: ${e.error()}`);
+        socket.on("error", function (e) {
+            // console.error(`VU ${__VU} error: ${e.error()}`);
         });
 
-        // Keep the connection open for a while
         sleep(25);
         socket.close();
     });
 
-    check(res, { 'websocket connected': (r) => r && r.status === 101 });
+    check(wsRes, { "websocket connected": (r) => r && r.status === 101 });
+
+    sleep(0.1);
 }
