@@ -2,6 +2,7 @@ import ws from "k6/ws";
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { BASE_URL, PATHS, DEFAULT_HEADERS } from "../../config/config.js";
+import { buildCreateNoteRequest } from "../../data/note.js";
 
 const WS_URL = "ws://localhost:8080/ws/websocket";
 
@@ -86,14 +87,12 @@ export default function () {
                 socket.send(`SUBSCRIBE\nid:sub-2\ndestination:/user/queue/notes\n\n\u0000`);
                 socket.send(`SUBSCRIBE\nid:sub-3\ndestination:/user/queue/notes/editing\n\n\u0000`);
 
+                const payload = buildCreateNoteRequest();
                 // Create a note (HTTP) once per connection
                 // NOTE: Adjust PATHS.NOTES (or payload fields) to match your API.
                 const createRes = http.post(
-                    `${BASE_URL}${PATHS.NOTES}`,
-                    JSON.stringify({
-                        title: `k6 note vu${__VU} iter${__ITER}`,
-                        content: "created under load",
-                    }),
+                    `${BASE_URL}${PATHS.CREATE_NOTE}`,
+                    JSON.stringify(payload),
                     {
                         headers: {
                             ...DEFAULT_HEADERS,
@@ -103,6 +102,7 @@ export default function () {
                     }
                 );
 
+                console.log(createRes.body, createRes.status, createRes.headers, createRes.json())
                 check(createRes, {
                     "note create status is 200/201": (r) => r.status === 200 || r.status === 201,
                 });
@@ -112,6 +112,10 @@ export default function () {
                     const payload = JSON.stringify({ noteId: 1, isEditing: true });
                     socket.send(`SEND\ndestination:/app/notes/editing\ncontent-type:application/json\n\n${payload}\u0000`);
                 }, 5000);
+            }
+            else
+            {
+                console.log(data)
             }
 
             // Heartbeats
