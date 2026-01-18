@@ -51,6 +51,7 @@ const NotesPage: React.FC = () => {
   const [success, setSuccess] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [currentUserName, setCurrentUserName] = useState<string | null>(null);
 
   // User cache for displaying names
   const [userCache, setUserCache] = useState<Map<number, UserDto>>(new Map());
@@ -225,6 +226,7 @@ const NotesPage: React.FC = () => {
     try {
       // Load current user first
       const currentUser = await usersApi.getCurrentUser();
+      setCurrentUserName(currentUser.firstname);
       setCurrentUserId(currentUser.id);
       setCurrentUserEmail(currentUser.email);
       setUserCache(prev => new Map(prev).set(currentUser.id, currentUser));
@@ -468,9 +470,10 @@ const NotesPage: React.FC = () => {
       .toUpperCase();
 
   const getUserDisplayName = (userId: number): string => {
-    const user = userCache.get(userId);
+    let user = userCache.get(userId);
     if (!user) {
       usersApi.getUserById(userId).then((fetchedUser) => {
+        user = fetchedUser;
         setUserCache((prev) => new Map(prev).set(userId, fetchedUser));
       });
     }
@@ -552,7 +555,7 @@ const NotesPage: React.FC = () => {
     <Box sx={{maxWidth: 800, mx: "auto", mt: 6, mb: 10}}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" align="center" sx={{flex: 1}}>
-          ✨ My Notes
+          ✨ Hello, {currentUserName}!
         </Typography>
         <Stack direction="row" spacing={1} alignItems="center">
           <Chip
